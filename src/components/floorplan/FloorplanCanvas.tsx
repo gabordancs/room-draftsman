@@ -1,53 +1,54 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { Wall, Point, ToolMode } from '@/types/floorplan';
+import { Wall, Opening, Point, ToolMode, OpeningType } from '@/types/floorplan';
 import {
   distance,
   snapEndPoint,
   snapToEndpoints,
   snapToGrid,
   formatLength,
-  generateId,
 } from '@/utils/geometry';
 
 interface Props {
   walls: Wall[];
+  openings: Opening[];
   selectedWallId: string | null;
+  selectedOpeningId: string | null;
   toolMode: ToolMode;
-  gridSize: number; // px per meter
+  gridSize: number;
   globalWallHeight: number;
   onAddWall: (wall: Omit<Wall, 'id'>) => string;
   onSelectWall: (id: string | null) => void;
+  onAddOpening: (opening: Omit<Opening, 'id'>) => string;
+  onSelectOpening: (id: string | null) => void;
 }
 
 const WALL_THICKNESS = 6;
-const SNAP_RADIUS = 12; // pixels
-const GRID_SUBDIVISIONS = 10; // sub-grid lines per meter
+const SNAP_RADIUS = 12;
+const GRID_SUBDIVISIONS = 10;
 
 export default function FloorplanCanvas({
   walls,
+  openings,
   selectedWallId,
+  selectedOpeningId,
   toolMode,
   gridSize,
   globalWallHeight,
   onAddWall,
   onSelectWall,
+  onAddOpening,
+  onSelectOpening,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // View transform
   const [offset, setOffset] = useState<Point>({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
-
-  // Drawing state
   const [drawStart, setDrawStart] = useState<Point | null>(null);
   const [drawCurrent, setDrawCurrent] = useState<Point | null>(null);
-
-  // Panning state
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState<Point>({ x: 0, y: 0 });
 
-  // Screen to world coords
   const screenToWorld = useCallback(
     (sx: number, sy: number): Point => ({
       x: (sx - offset.x) / zoom,
@@ -56,7 +57,6 @@ export default function FloorplanCanvas({
     [offset, zoom]
   );
 
-  // World to screen coords
   const worldToScreen = useCallback(
     (wx: number, wy: number): Point => ({
       x: wx * zoom + offset.x,
@@ -65,7 +65,7 @@ export default function FloorplanCanvas({
     [offset, zoom]
   );
 
-  // Resize canvas
+  // Resize
   useEffect(() => {
     const resize = () => {
       const canvas = canvasRef.current;
@@ -94,11 +94,9 @@ export default function FloorplanCanvas({
     const w = canvas.width / dpr;
     const h = canvas.height / dpr;
 
-    // Clear
     ctx.fillStyle = '#1a1a2e';
     ctx.fillRect(0, 0, w, h);
 
-    // Draw grid
     drawGrid(ctx, w, h, offset, zoom, gridSize);
 
     // Draw walls
@@ -106,7 +104,15 @@ export default function FloorplanCanvas({
       drawWall(ctx, wall, wall.id === selectedWallId, offset, zoom, gridSize);
     }
 
-    // Draw in-progress wall
+    // Draw openings
+    for (const opening of openings) {
+      const wall = walls.find(w => w.id === opening.wallId);
+      if (wall) {
+        drawOpening(ctx, opening, wall, opening.id === selectedOpeningId, offset, zoom, gridSize);
+      }
+    }
+
+    // In-progress wall
     if (drawStart && drawCurrent) {
       const s = worldToScreen(drawStart.x, drawStart.y);
       const e = worldToScreen(drawCurrent.x, drawCurrent.y);
@@ -120,7 +126,6 @@ export default function FloorplanCanvas({
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // Length label
       const lengthM = distance(drawStart, drawCurrent) / gridSize;
       const mid = { x: (s.x + e.x) / 2, y: (s.y + e.y) / 2 };
       ctx.font = '13px monospace';
@@ -139,7 +144,63 @@ export default function FloorplanCanvas({
     ctx.moveTo(0, o.y);
     ctx.lineTo(w, o.y);
     ctx.stroke();
-  }, [walls, selectedWallId, drawStart, drawCurrent, offset, zoom, gridSize, worldToScreen]);
+  }, [walls, openings, selectedWallId, selectedOpeningId, drawStart, drawCurrent, offset, zoom, gridSize, worldToScreen]);
+
+  // Handle drop of opening from palette
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      const openingType = e.dataTransfer.getData('openingType') as OpeningType;
+      if (!openingType) return;
+
+      const rect = canvasRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const sx = e.clientX - rect.left;
+      const sy = e.clientY - rect.top;
+      const world = screenToWorld(sx, sy);
+
+      // Find closest wall
+      const wall = findWallAtPoint(world, walls, 20 / zoom);
+      if (!wall) return;
+
+      // Calculate position along wall (0-1)
+      const pos = projectPointOnSegment(world, wall.start, wall.end);
+      const clampedPos = Math.max(0.05, Math.min(0.95, pos));
+
+      // Check if opening fits (default width 1m)
+      const wallLenM = distance(wall.start, wall.end) / gridSize;
+      const defaultWidth = openingType === 'door' ? 0.9 : 1.2;
+      const openingWidthRatio = defaultWidth / wallLenM;
+      
+      if (openingWidthRatio > 0.9) return; // wall too short
+
+      // Check overlap with existing openings on this wall
+      const wallOpenings = openings.filter(o => o.wallId === wall.id);
+      const halfRatio = openingWidthRatio / 2;
+      const canPlace = !wallOpenings.some(existing => {
+        const existingHalf = (existing.width / wallLenM) / 2;
+        return Math.abs(existing.position - clampedPos) < (halfRatio + existingHalf);
+      });
+      if (!canPlace) return;
+
+      onAddOpening({
+        type: openingType,
+        wallId: wall.id,
+        width: defaultWidth,
+        height: openingType === 'door' ? 2.1 : 1.2,
+        sillHeight: openingType === 'window' ? 0.9 : 0,
+        uValue: null,
+        position: clampedPos,
+        photos: [],
+      });
+    },
+    [walls, openings, zoom, gridSize, screenToWorld, onAddOpening]
+  );
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  }, []);
 
   // Pointer events
   const handlePointerDown = useCallback(
@@ -149,7 +210,6 @@ export default function FloorplanCanvas({
       const sx = e.clientX - rect.left;
       const sy = e.clientY - rect.top;
 
-      // Middle button or pan mode
       if (e.button === 1 || toolMode === 'pan') {
         setIsPanning(true);
         setPanStart({ x: sx - offset.x, y: sy - offset.y });
@@ -161,20 +221,17 @@ export default function FloorplanCanvas({
 
       if (toolMode === 'draw') {
         const world = screenToWorld(sx, sy);
-        // Snap to existing endpoints
-        const snapped = snapToEndpoints(world, walls, SNAP_RADIUS / zoom) 
+        const snapped = snapToEndpoints(world, walls, SNAP_RADIUS / zoom)
           || snapToGrid(world, gridSize / GRID_SUBDIVISIONS);
 
         if (!drawStart) {
           setDrawStart(snapped);
           setDrawCurrent(snapped);
         } else {
-          // Finish wall
           const end = snapToEndpoints(world, walls, SNAP_RADIUS / zoom)
             || snapEndPoint(drawStart, snapToGrid(world, gridSize / GRID_SUBDIVISIONS));
-          
-          const lengthPx = distance(drawStart, end);
-          if (lengthPx > 5) {
+
+          if (distance(drawStart, end) > 5) {
             onAddWall({
               start: drawStart,
               end,
@@ -190,12 +247,24 @@ export default function FloorplanCanvas({
         }
       } else if (toolMode === 'select') {
         const world = screenToWorld(sx, sy);
-        // Find closest wall
+
+        // Check openings first (smaller targets, higher priority)
+        const clickedOpening = findOpeningAtPoint(world, openings, walls, 10 / zoom, gridSize);
+        if (clickedOpening) {
+          onSelectOpening(clickedOpening.id);
+          return;
+        }
+
         const clicked = findWallAtPoint(world, walls, 8 / zoom);
-        onSelectWall(clicked?.id || null);
+        if (clicked) {
+          onSelectWall(clicked.id);
+        } else {
+          onSelectWall(null);
+          onSelectOpening(null);
+        }
       }
     },
-    [toolMode, drawStart, walls, offset, zoom, gridSize, screenToWorld, onAddWall, onSelectWall, globalWallHeight]
+    [toolMode, drawStart, walls, openings, offset, zoom, gridSize, screenToWorld, onAddWall, onSelectWall, onSelectOpening, globalWallHeight]
   );
 
   const handlePointerMove = useCallback(
@@ -241,7 +310,6 @@ export default function FloorplanCanvas({
       const factor = e.deltaY < 0 ? 1.1 : 0.9;
       const newZoom = Math.max(0.1, Math.min(10, zoom * factor));
 
-      // Zoom towards cursor
       setOffset({
         x: sx - (sx - offset.x) * (newZoom / zoom),
         y: sy - (sy - offset.y) * (newZoom / zoom),
@@ -251,7 +319,6 @@ export default function FloorplanCanvas({
     [zoom, offset]
   );
 
-  // Cancel drawing on Escape
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -264,7 +331,12 @@ export default function FloorplanCanvas({
   }, []);
 
   return (
-    <div ref={containerRef} className="w-full h-full relative overflow-hidden cursor-crosshair">
+    <div
+      ref={containerRef}
+      className="w-full h-full relative overflow-hidden cursor-crosshair"
+      onDrop={handleDrop}
+      onDragOver={handleDragOver}
+    >
       <canvas
         ref={canvasRef}
         className="absolute inset-0"
@@ -274,7 +346,6 @@ export default function FloorplanCanvas({
         onWheel={handleWheel}
         style={{ touchAction: 'none' }}
       />
-      {/* Zoom indicator */}
       <div className="absolute bottom-3 left-3 text-xs font-mono text-muted-foreground bg-background/80 px-2 py-1 rounded">
         {Math.round(zoom * 100)}% | 1m = {Math.round(gridSize * zoom)}px
       </div>
@@ -286,62 +357,40 @@ export default function FloorplanCanvas({
 
 function drawGrid(
   ctx: CanvasRenderingContext2D,
-  w: number,
-  h: number,
-  offset: Point,
-  zoom: number,
-  gridSize: number
+  w: number, h: number,
+  offset: Point, zoom: number, gridSize: number
 ) {
   const subSize = (gridSize / GRID_SUBDIVISIONS) * zoom;
   const mainSize = gridSize * zoom;
 
-  // Sub grid
   if (subSize > 4) {
     ctx.strokeStyle = 'rgba(255,255,255,0.04)';
     ctx.lineWidth = 0.5;
     const startX = offset.x % subSize;
     const startY = offset.y % subSize;
     ctx.beginPath();
-    for (let x = startX; x < w; x += subSize) {
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, h);
-    }
-    for (let y = startY; y < h; y += subSize) {
-      ctx.moveTo(0, y);
-      ctx.lineTo(w, y);
-    }
+    for (let x = startX; x < w; x += subSize) { ctx.moveTo(x, 0); ctx.lineTo(x, h); }
+    for (let y = startY; y < h; y += subSize) { ctx.moveTo(0, y); ctx.lineTo(w, y); }
     ctx.stroke();
   }
 
-  // Main grid (1m)
   ctx.strokeStyle = 'rgba(255,255,255,0.1)';
   ctx.lineWidth = 1;
   const mainStartX = offset.x % mainSize;
   const mainStartY = offset.y % mainSize;
   ctx.beginPath();
-  for (let x = mainStartX; x < w; x += mainSize) {
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, h);
-  }
-  for (let y = mainStartY; y < h; y += mainSize) {
-    ctx.moveTo(0, y);
-    ctx.lineTo(w, y);
-  }
+  for (let x = mainStartX; x < w; x += mainSize) { ctx.moveTo(x, 0); ctx.lineTo(x, h); }
+  for (let y = mainStartY; y < h; y += mainSize) { ctx.moveTo(0, y); ctx.lineTo(w, y); }
   ctx.stroke();
 }
 
 function drawWall(
-  ctx: CanvasRenderingContext2D,
-  wall: Wall,
-  selected: boolean,
-  offset: Point,
-  zoom: number,
-  gridSize: number
+  ctx: CanvasRenderingContext2D, wall: Wall, selected: boolean,
+  offset: Point, zoom: number, gridSize: number
 ) {
   const s = { x: wall.start.x * zoom + offset.x, y: wall.start.y * zoom + offset.y };
   const e = { x: wall.end.x * zoom + offset.x, y: wall.end.y * zoom + offset.y };
 
-  // Wall line
   ctx.strokeStyle = selected ? '#ffd54f' : '#e0e0e0';
   ctx.lineWidth = selected ? WALL_THICKNESS + 2 : WALL_THICKNESS;
   ctx.lineCap = 'round';
@@ -350,7 +399,6 @@ function drawWall(
   ctx.lineTo(e.x, e.y);
   ctx.stroke();
 
-  // Endpoints
   for (const p of [s, e]) {
     ctx.fillStyle = selected ? '#ffd54f' : '#bdbdbd';
     ctx.beginPath();
@@ -358,7 +406,6 @@ function drawWall(
     ctx.fill();
   }
 
-  // Length label
   const lengthM = distance(wall.start, wall.end) / gridSize;
   const mid = { x: (s.x + e.x) / 2, y: (s.y + e.y) / 2 };
   ctx.font = '11px monospace';
@@ -367,18 +414,172 @@ function drawWall(
   ctx.fillText(formatLength(lengthM), mid.x, mid.y - 10);
 }
 
+function drawOpening(
+  ctx: CanvasRenderingContext2D,
+  opening: Opening,
+  wall: Wall,
+  selected: boolean,
+  offset: Point,
+  zoom: number,
+  gridSize: number
+) {
+  const wallLen = distance(wall.start, wall.end);
+  if (wallLen === 0) return;
+
+  const dx = wall.end.x - wall.start.x;
+  const dy = wall.end.y - wall.start.y;
+  const ux = dx / wallLen;
+  const uy = dy / wallLen;
+
+  // Opening center position along wall
+  const centerPx = opening.position * wallLen;
+  const halfWidthPx = (opening.width * gridSize) / 2;
+
+  const startAlongWall = centerPx - halfWidthPx;
+  const endAlongWall = centerPx + halfWidthPx;
+
+  const p1 = {
+    x: (wall.start.x + ux * startAlongWall) * zoom + offset.x,
+    y: (wall.start.y + uy * startAlongWall) * zoom + offset.y,
+  };
+  const p2 = {
+    x: (wall.start.x + ux * endAlongWall) * zoom + offset.x,
+    y: (wall.start.y + uy * endAlongWall) * zoom + offset.y,
+  };
+
+  // Normal perpendicular to wall
+  const nx = -uy;
+  const ny = ux;
+  const normalLen = 8;
+
+  if (opening.type === 'window') {
+    // Window: double line with gap
+    ctx.strokeStyle = selected ? '#64b5f6' : '#42a5f5';
+    ctx.lineWidth = selected ? 4 : 3;
+    ctx.setLineDash([]);
+
+    // Clear wall behind opening
+    ctx.save();
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.strokeStyle = 'rgba(0,0,0,1)';
+    ctx.lineWidth = WALL_THICKNESS + 2;
+    ctx.beginPath();
+    ctx.moveTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
+    ctx.stroke();
+    ctx.restore();
+
+    // Draw window symbol (two parallel lines)
+    for (const sign of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(p1.x + nx * normalLen * sign * zoom * 0.03, p1.y + ny * normalLen * sign * zoom * 0.03);
+      ctx.lineTo(p2.x + nx * normalLen * sign * zoom * 0.03, p2.y + ny * normalLen * sign * zoom * 0.03);
+      ctx.stroke();
+    }
+
+    // Center cross line
+    ctx.lineWidth = 1;
+    const midX = (p1.x + p2.x) / 2;
+    const midY = (p1.y + p2.y) / 2;
+    ctx.beginPath();
+    ctx.moveTo(midX + nx * normalLen * zoom * 0.04, midY + ny * normalLen * zoom * 0.04);
+    ctx.lineTo(midX - nx * normalLen * zoom * 0.04, midY - ny * normalLen * zoom * 0.04);
+    ctx.stroke();
+  } else {
+    // Door: line with arc
+    ctx.strokeStyle = selected ? '#81c784' : '#66bb6a';
+    ctx.lineWidth = selected ? 4 : 3;
+
+    // Clear wall behind
+    ctx.save();
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.strokeStyle = 'rgba(0,0,0,1)';
+    ctx.lineWidth = WALL_THICKNESS + 2;
+    ctx.beginPath();
+    ctx.moveTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
+    ctx.stroke();
+    ctx.restore();
+
+    // Door swing arc
+    ctx.strokeStyle = selected ? '#81c784' : '#66bb6a';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 3]);
+    const arcRadius = distance(
+      { x: 0, y: 0 },
+      { x: p2.x - p1.x, y: p2.y - p1.y }
+    );
+    const wallAngle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+    ctx.beginPath();
+    ctx.arc(p1.x, p1.y, arcRadius, wallAngle, wallAngle - Math.PI / 2, true);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Door line
+    ctx.lineWidth = 2;
+    const doorEndX = p1.x + nx * arcRadius;
+    const doorEndY = p1.y + ny * arcRadius;
+    ctx.beginPath();
+    ctx.moveTo(p1.x, p1.y);
+    ctx.lineTo(doorEndX, doorEndY);
+    ctx.stroke();
+  }
+
+  // Selection indicator
+  if (selected) {
+    const midX = (p1.x + p2.x) / 2;
+    const midY = (p1.y + p2.y) / 2;
+    ctx.fillStyle = opening.type === 'window' ? '#64b5f6' : '#81c784';
+    ctx.beginPath();
+    ctx.arc(midX, midY, 5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
 function findWallAtPoint(point: Point, walls: Wall[], threshold: number): Wall | null {
   let best: Wall | null = null;
   let bestDist = Infinity;
-
   for (const wall of walls) {
     const d = pointToSegmentDistance(point, wall.start, wall.end);
-    if (d < threshold && d < bestDist) {
+    if (d < threshold && d < bestDist) { bestDist = d; best = wall; }
+  }
+  return best;
+}
+
+function findOpeningAtPoint(
+  point: Point, openings: Opening[], walls: Wall[], threshold: number, gridSize: number
+): Opening | null {
+  let best: Opening | null = null;
+  let bestDist = Infinity;
+
+  for (const opening of openings) {
+    const wall = walls.find(w => w.id === opening.wallId);
+    if (!wall) continue;
+
+    const wallLen = distance(wall.start, wall.end);
+    if (wallLen === 0) continue;
+
+    const dx = wall.end.x - wall.start.x;
+    const dy = wall.end.y - wall.start.y;
+
+    const centerX = wall.start.x + (dx * opening.position);
+    const centerY = wall.start.y + (dy * opening.position);
+
+    const d = distance(point, { x: centerX, y: centerY });
+    if (d < threshold + (opening.width * gridSize) / 2 && d < bestDist) {
       bestDist = d;
-      best = wall;
+      best = opening;
     }
   }
   return best;
+}
+
+function projectPointOnSegment(p: Point, a: Point, b: Point): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return 0;
+  return Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq));
 }
 
 function pointToSegmentDistance(p: Point, a: Point, b: Point): number {
@@ -386,10 +587,7 @@ function pointToSegmentDistance(p: Point, a: Point, b: Point): number {
   const dy = b.y - a.y;
   const lenSq = dx * dx + dy * dy;
   if (lenSq === 0) return distance(p, a);
-
   let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq;
   t = Math.max(0, Math.min(1, t));
-
-  const proj = { x: a.x + t * dx, y: a.y + t * dy };
-  return distance(p, proj);
+  return distance(p, { x: a.x + t * dx, y: a.y + t * dy });
 }
