@@ -18,13 +18,13 @@ export function useFloorplanStore() {
   const [state, setState] = useState<FloorplanState>(initialState);
 
   const setToolMode = useCallback((mode: ToolMode) => {
-    setState(s => ({ ...s, toolMode: mode, selectedWallId: null }));
+    setState(s => ({ ...s, toolMode: mode, selectedWallId: null, selectedOpeningId: null }));
   }, []);
 
   const addWall = useCallback((wall: Omit<Wall, 'id'>) => {
     const id = generateId();
     const newWall: Wall = { ...wall, id };
-    setState(s => ({ ...s, walls: [...s.walls, newWall], selectedWallId: id }));
+    setState(s => ({ ...s, walls: [...s.walls, newWall], selectedWallId: id, selectedOpeningId: null }));
     return id;
   }, []);
 
@@ -41,11 +41,39 @@ export function useFloorplanStore() {
       walls: s.walls.filter(w => w.id !== id),
       openings: s.openings.filter(o => o.wallId !== id),
       selectedWallId: s.selectedWallId === id ? null : s.selectedWallId,
+      selectedOpeningId: null,
     }));
   }, []);
 
   const selectWall = useCallback((id: string | null) => {
     setState(s => ({ ...s, selectedWallId: id, selectedOpeningId: null }));
+  }, []);
+
+  // ─── Opening actions ─────────────────────────
+  const addOpening = useCallback((opening: Omit<Opening, 'id'>) => {
+    const id = generateId();
+    const newOpening: Opening = { ...opening, id };
+    setState(s => ({ ...s, openings: [...s.openings, newOpening], selectedOpeningId: id, selectedWallId: null }));
+    return id;
+  }, []);
+
+  const updateOpening = useCallback((id: string, updates: Partial<Opening>) => {
+    setState(s => ({
+      ...s,
+      openings: s.openings.map(o => o.id === id ? { ...o, ...updates } : o),
+    }));
+  }, []);
+
+  const deleteOpening = useCallback((id: string) => {
+    setState(s => ({
+      ...s,
+      openings: s.openings.filter(o => o.id !== id),
+      selectedOpeningId: s.selectedOpeningId === id ? null : s.selectedOpeningId,
+    }));
+  }, []);
+
+  const selectOpening = useCallback((id: string | null) => {
+    setState(s => ({ ...s, selectedOpeningId: id, selectedWallId: null }));
   }, []);
 
   const setGlobalWallHeight = useCallback((height: number) => {
@@ -67,6 +95,10 @@ export function useFloorplanStore() {
     updateWall,
     deleteWall,
     selectWall,
+    addOpening,
+    updateOpening,
+    deleteOpening,
+    selectOpening,
     setGlobalWallHeight,
     setNorthAngle,
     setGridSize,
