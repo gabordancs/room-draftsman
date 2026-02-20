@@ -1,11 +1,50 @@
-// Update this page (the content is just a fallback if you fail to update the page)
+import React from 'react';
+import FloorplanCanvas from '@/components/floorplan/FloorplanCanvas';
+import WallEditorPanel from '@/components/floorplan/WallEditorPanel';
+import Toolbar from '@/components/floorplan/Toolbar';
+import { useFloorplanStore } from '@/hooks/useFloorplanStore';
 
 const Index = () => {
+  const {
+    state,
+    setToolMode,
+    addWall,
+    updateWall,
+    deleteWall,
+    selectWall,
+  } = useFloorplanStore();
+
+  const selectedWall = state.walls.find(w => w.id === state.selectedWallId) || null;
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background">
-      <div className="text-center">
-        <h1 className="mb-4 text-4xl font-bold">Welcome to Your Blank App</h1>
-        <p className="text-xl text-muted-foreground">Start building your amazing project here!</p>
+    <div className="flex flex-col h-screen bg-background">
+      <Toolbar
+        toolMode={state.toolMode}
+        onSetToolMode={setToolMode}
+        wallCount={state.walls.length}
+      />
+      <div className="flex flex-1 overflow-hidden">
+        <div className="flex-1">
+          <FloorplanCanvas
+            walls={state.walls}
+            selectedWallId={state.selectedWallId}
+            toolMode={state.toolMode}
+            gridSize={state.gridSize}
+            globalWallHeight={state.globalWallHeight}
+            onAddWall={addWall}
+            onSelectWall={selectWall}
+          />
+        </div>
+        {selectedWall && (
+          <WallEditorPanel
+            wall={selectedWall}
+            gridSize={state.gridSize}
+            northAngle={state.northAngle}
+            onUpdate={updateWall}
+            onDelete={(id) => { deleteWall(id); }}
+            onClose={() => selectWall(null)}
+          />
+        )}
       </div>
     </div>
   );
