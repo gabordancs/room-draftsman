@@ -22,6 +22,7 @@ const Index = () => {
     deleteRoom,
     selectRoom,
     recalcRooms,
+    setNorthAngle,
   } = useFloorplanStore();
 
   // Recalc rooms whenever walls change
@@ -57,6 +58,8 @@ const Index = () => {
             toolMode={state.toolMode}
             gridSize={state.gridSize}
             globalWallHeight={state.globalWallHeight}
+            northAngle={state.northAngle}
+            onSetNorthAngle={setNorthAngle}
             onAddWall={addWall}
             onSelectWall={selectWall}
             onAddOpening={addOpening}
