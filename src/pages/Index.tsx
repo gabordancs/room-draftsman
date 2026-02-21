@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import FloorplanCanvas from '@/components/floorplan/FloorplanCanvas';
 import WallEditorPanel from '@/components/floorplan/WallEditorPanel';
 import OpeningEditorPanel from '@/components/floorplan/OpeningEditorPanel';
+import RoomEditorPanel from '@/components/floorplan/RoomEditorPanel';
 import Toolbar from '@/components/floorplan/Toolbar';
 import { useFloorplanStore } from '@/hooks/useFloorplanStore';
 
@@ -17,13 +18,23 @@ const Index = () => {
     updateOpening,
     deleteOpening,
     selectOpening,
+    updateRoom,
+    deleteRoom,
+    selectRoom,
+    recalcRooms,
   } = useFloorplanStore();
+
+  // Recalc rooms whenever walls change
+  useEffect(() => {
+    recalcRooms();
+  }, [state.walls.length, recalcRooms]);
 
   const selectedWall = state.walls.find(w => w.id === state.selectedWallId) || null;
   const selectedOpening = state.openings.find(o => o.id === state.selectedOpeningId) || null;
   const selectedOpeningWall = selectedOpening
     ? state.walls.find(w => w.id === selectedOpening.wallId) || null
     : null;
+  const selectedRoom = state.rooms.find(r => r.id === state.selectedRoomId) || null;
 
   return (
     <div className="flex flex-col h-screen bg-background">
@@ -32,14 +43,17 @@ const Index = () => {
         onSetToolMode={setToolMode}
         wallCount={state.walls.length}
         openingCount={state.openings.length}
+        roomCount={state.rooms.length}
       />
       <div className="flex flex-1 overflow-hidden">
         <div className="flex-1">
           <FloorplanCanvas
             walls={state.walls}
             openings={state.openings}
+            rooms={state.rooms}
             selectedWallId={state.selectedWallId}
             selectedOpeningId={state.selectedOpeningId}
+            selectedRoomId={state.selectedRoomId}
             toolMode={state.toolMode}
             gridSize={state.gridSize}
             globalWallHeight={state.globalWallHeight}
@@ -47,6 +61,7 @@ const Index = () => {
             onSelectWall={selectWall}
             onAddOpening={addOpening}
             onSelectOpening={selectOpening}
+            onSelectRoom={selectRoom}
           />
         </div>
         {selectedWall && (
@@ -68,6 +83,16 @@ const Index = () => {
             onUpdate={updateOpening}
             onDelete={deleteOpening}
             onClose={() => selectOpening(null)}
+          />
+        )}
+        {selectedRoom && (
+          <RoomEditorPanel
+            room={selectedRoom}
+            walls={state.walls}
+            gridSize={state.gridSize}
+            onUpdate={updateRoom}
+            onDelete={deleteRoom}
+            onClose={() => selectRoom(null)}
           />
         )}
       </div>

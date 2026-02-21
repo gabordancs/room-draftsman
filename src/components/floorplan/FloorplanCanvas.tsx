@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { Wall, Opening, Point, ToolMode, OpeningType } from '@/types/floorplan';
+import { Wall, Opening, Room, Point, ToolMode, OpeningType } from '@/types/floorplan';
 import {
   distance,
   snapEndPoint,
@@ -7,12 +7,15 @@ import {
   snapToGrid,
   formatLength,
 } from '@/utils/geometry';
+import { getRoomPolygonPoints, polygonCentroid } from '@/utils/roomDetection';
 
 interface Props {
   walls: Wall[];
   openings: Opening[];
+  rooms: Room[];
   selectedWallId: string | null;
   selectedOpeningId: string | null;
+  selectedRoomId: string | null;
   toolMode: ToolMode;
   gridSize: number;
   globalWallHeight: number;
@@ -20,6 +23,7 @@ interface Props {
   onSelectWall: (id: string | null) => void;
   onAddOpening: (opening: Omit<Opening, 'id'>) => string;
   onSelectOpening: (id: string | null) => void;
+  onSelectRoom: (id: string | null) => void;
 }
 
 const WALL_THICKNESS = 6;
@@ -29,8 +33,10 @@ const GRID_SUBDIVISIONS = 10;
 export default function FloorplanCanvas({
   walls,
   openings,
+  rooms,
   selectedWallId,
   selectedOpeningId,
+  selectedRoomId,
   toolMode,
   gridSize,
   globalWallHeight,
@@ -38,6 +44,7 @@ export default function FloorplanCanvas({
   onSelectWall,
   onAddOpening,
   onSelectOpening,
+  onSelectRoom,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -99,6 +106,11 @@ export default function FloorplanCanvas({
 
     drawGrid(ctx, w, h, offset, zoom, gridSize);
 
+    // Draw room fills
+    for (const room of rooms) {
+      drawRoom(ctx, room, walls, room.id === selectedRoomId, offset, zoom, gridSize);
+    }
+
     // Draw walls
     for (const wall of walls) {
       drawWall(ctx, wall, wall.id === selectedWallId, offset, zoom, gridSize);
@@ -144,7 +156,7 @@ export default function FloorplanCanvas({
     ctx.moveTo(0, o.y);
     ctx.lineTo(w, o.y);
     ctx.stroke();
-  }, [walls, openings, selectedWallId, selectedOpeningId, drawStart, drawCurrent, offset, zoom, gridSize, worldToScreen]);
+  }, [walls, openings, rooms, selectedWallId, selectedOpeningId, selectedRoomId, drawStart, drawCurrent, offset, zoom, gridSize, worldToScreen]);
 
   // Handle drop of opening from palette
   const handleDrop = useCallback(
@@ -259,12 +271,19 @@ export default function FloorplanCanvas({
         if (clicked) {
           onSelectWall(clicked.id);
         } else {
-          onSelectWall(null);
-          onSelectOpening(null);
+          // Check if clicked inside a room
+          const clickedRoom = findRoomAtPoint(world, rooms, walls);
+          if (clickedRoom) {
+            onSelectRoom(clickedRoom.id);
+          } else {
+            onSelectWall(null);
+            onSelectOpening(null);
+            onSelectRoom(null);
+          }
         }
       }
     },
-    [toolMode, drawStart, walls, openings, offset, zoom, gridSize, screenToWorld, onAddWall, onSelectWall, onSelectOpening, globalWallHeight]
+    [toolMode, drawStart, walls, openings, rooms, offset, zoom, gridSize, screenToWorld, onAddWall, onSelectWall, onSelectOpening, onSelectRoom, globalWallHeight]
   );
 
   const handlePointerMove = useCallback(
@@ -382,6 +401,59 @@ function drawGrid(
   for (let x = mainStartX; x < w; x += mainSize) { ctx.moveTo(x, 0); ctx.lineTo(x, h); }
   for (let y = mainStartY; y < h; y += mainSize) { ctx.moveTo(0, y); ctx.lineTo(w, y); }
   ctx.stroke();
+}
+
+function drawRoom(
+  ctx: CanvasRenderingContext2D, room: Room, walls: Wall[], selected: boolean,
+  offset: Point, zoom: number, gridSize: number
+) {
+  const points = getRoomPolygonPoints(room, walls);
+  if (!points || points.length < 3) return;
+
+  const screenPoints = points.map(p => ({
+    x: p.x * zoom + offset.x,
+    y: p.y * zoom + offset.y,
+  }));
+
+  // Fill
+  ctx.fillStyle = selected ? 'rgba(100, 181, 246, 0.15)' : 'rgba(255, 255, 255, 0.05)';
+  ctx.beginPath();
+  ctx.moveTo(screenPoints[0].x, screenPoints[0].y);
+  for (let i = 1; i < screenPoints.length; i++) {
+    ctx.lineTo(screenPoints[i].x, screenPoints[i].y);
+  }
+  ctx.closePath();
+  ctx.fill();
+
+  if (selected) {
+    ctx.strokeStyle = 'rgba(100, 181, 246, 0.4)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  // Label
+  const centroid = polygonCentroid(points);
+  const sc = { x: centroid.x * zoom + offset.x, y: centroid.y * zoom + offset.y };
+  const areaM2 = calcPolygonArea(points) / (gridSize * gridSize);
+
+  ctx.font = selected ? 'bold 12px sans-serif' : '11px sans-serif';
+  ctx.fillStyle = selected ? '#64b5f6' : 'rgba(255,255,255,0.5)';
+  ctx.textAlign = 'center';
+  ctx.fillText(room.name, sc.x, sc.y - 6);
+
+  ctx.font = '10px monospace';
+  ctx.fillText(`${areaM2.toFixed(2)} m²`, sc.x, sc.y + 8);
+}
+
+function calcPolygonArea(points: Point[]): number {
+  let area = 0;
+  const n = points.length;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    area += points[i].x * points[j].y;
+    area -= points[j].x * points[i].y;
+  }
+  return Math.abs(area / 2);
 }
 
 function drawWall(
@@ -590,4 +662,27 @@ function pointToSegmentDistance(p: Point, a: Point, b: Point): number {
   let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq;
   t = Math.max(0, Math.min(1, t));
   return distance(p, { x: a.x + t * dx, y: a.y + t * dy });
+}
+
+function findRoomAtPoint(point: Point, rooms: Room[], walls: Wall[]): Room | null {
+  for (const room of rooms) {
+    const points = getRoomPolygonPoints(room, walls);
+    if (!points || points.length < 3) continue;
+    if (isPointInPolygon(point, points)) return room;
+  }
+  return null;
+}
+
+function isPointInPolygon(point: Point, polygon: Point[]): boolean {
+  let inside = false;
+  const n = polygon.length;
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const xi = polygon[i].x, yi = polygon[i].y;
+    const xj = polygon[j].x, yj = polygon[j].y;
+    if ((yi > point.y) !== (yj > point.y) &&
+        point.x < (xj - xi) * (point.y - yi) / (yj - yi) + xi) {
+      inside = !inside;
+    }
+  }
+  return inside;
 }

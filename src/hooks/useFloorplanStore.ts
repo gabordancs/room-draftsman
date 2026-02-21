@@ -1,6 +1,7 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Wall, Opening, Room, FloorplanState, ToolMode } from '@/types/floorplan';
 import { generateId } from '@/utils/geometry';
+import { detectRooms } from '@/utils/roomDetection';
 
 const initialState: FloorplanState = {
   walls: [],
@@ -8,10 +9,11 @@ const initialState: FloorplanState = {
   rooms: [],
   selectedWallId: null,
   selectedOpeningId: null,
+  selectedRoomId: null,
   toolMode: 'draw',
   globalWallHeight: 2.8,
   northAngle: 0,
-  gridSize: 100, // 100px = 1m
+  gridSize: 100,
 };
 
 export function useFloorplanStore() {
@@ -88,6 +90,34 @@ export function useFloorplanStore() {
     setState(s => ({ ...s, gridSize: size }));
   }, []);
 
+  // Room actions
+  const updateRoom = useCallback((id: string, updates: Partial<Room>) => {
+    setState(s => ({
+      ...s,
+      rooms: s.rooms.map(r => r.id === id ? { ...r, ...updates } : r),
+    }));
+  }, []);
+
+  const deleteRoom = useCallback((id: string) => {
+    setState(s => ({
+      ...s,
+      rooms: s.rooms.filter(r => r.id !== id),
+      selectedRoomId: s.selectedRoomId === id ? null : s.selectedRoomId,
+    }));
+  }, []);
+
+  const selectRoom = useCallback((id: string | null) => {
+    setState(s => ({ ...s, selectedRoomId: id, selectedWallId: null, selectedOpeningId: null }));
+  }, []);
+
+  // Auto-detect rooms when walls change
+  const recalcRooms = useCallback(() => {
+    setState(s => {
+      const newRooms = detectRooms(s.walls, s.gridSize, s.rooms);
+      return { ...s, rooms: newRooms };
+    });
+  }, []);
+
   return {
     state,
     setToolMode,
@@ -102,5 +132,9 @@ export function useFloorplanStore() {
     setGlobalWallHeight,
     setNorthAngle,
     setGridSize,
+    updateRoom,
+    deleteRoom,
+    selectRoom,
+    recalcRooms,
   };
 }
