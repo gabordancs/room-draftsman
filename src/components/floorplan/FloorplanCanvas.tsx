@@ -19,6 +19,8 @@ interface Props {
   toolMode: ToolMode;
   gridSize: number;
   globalWallHeight: number;
+  northAngle: number;
+  onSetNorthAngle: (angle: number) => void;
   onAddWall: (wall: Omit<Wall, 'id'>) => string;
   onSelectWall: (id: string | null) => void;
   onAddOpening: (opening: Omit<Opening, 'id'>) => string;
@@ -40,6 +42,8 @@ export default function FloorplanCanvas({
   toolMode,
   gridSize,
   globalWallHeight,
+  northAngle,
+  onSetNorthAngle,
   onAddWall,
   onSelectWall,
   onAddOpening,
@@ -55,7 +59,10 @@ export default function FloorplanCanvas({
   const [drawCurrent, setDrawCurrent] = useState<Point | null>(null);
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState<Point>({ x: 0, y: 0 });
+  const [isDraggingCompass, setIsDraggingCompass] = useState(false);
 
+  const COMPASS_RADIUS = 40;
+  const COMPASS_MARGIN = 20;
   const screenToWorld = useCallback(
     (sx: number, sy: number): Point => ({
       x: (sx - offset.x) / zoom,
@@ -156,7 +163,10 @@ export default function FloorplanCanvas({
     ctx.moveTo(0, o.y);
     ctx.lineTo(w, o.y);
     ctx.stroke();
-  }, [walls, openings, rooms, selectedWallId, selectedOpeningId, selectedRoomId, drawStart, drawCurrent, offset, zoom, gridSize, worldToScreen]);
+
+    // Compass
+    drawCompass(ctx, w, northAngle, COMPASS_RADIUS, COMPASS_MARGIN);
+  }, [walls, openings, rooms, selectedWallId, selectedOpeningId, selectedRoomId, drawStart, drawCurrent, offset, zoom, gridSize, northAngle, worldToScreen]);
 
   // Handle drop of opening from palette
   const handleDrop = useCallback(
@@ -229,6 +239,20 @@ export default function FloorplanCanvas({
         return;
       }
 
+      // Check compass click
+      const canvas = canvasRef.current;
+      if (canvas) {
+        const cw = canvas.width / window.devicePixelRatio;
+        const compassCx = cw - COMPASS_MARGIN - COMPASS_RADIUS;
+        const compassCy = COMPASS_MARGIN + COMPASS_RADIUS;
+        const dist = Math.sqrt((sx - compassCx) ** 2 + (sy - compassCy) ** 2);
+        if (dist <= COMPASS_RADIUS + 10) {
+          setIsDraggingCompass(true);
+          (e.target as HTMLElement).setPointerCapture(e.pointerId);
+          return;
+        }
+      }
+
       if (e.button !== 0) return;
 
       if (toolMode === 'draw') {
@@ -298,6 +322,21 @@ export default function FloorplanCanvas({
         return;
       }
 
+      if (isDraggingCompass) {
+        const canvas = canvasRef.current;
+        if (canvas) {
+          const cw = canvas.width / window.devicePixelRatio;
+          const compassCx = cw - COMPASS_MARGIN - COMPASS_RADIUS;
+          const compassCy = COMPASS_MARGIN + COMPASS_RADIUS;
+          const angle = Math.atan2(sy - compassCy, sx - compassCx);
+          // North points up by default, so angle 0 = right, we want north = up = -90deg
+          let degrees = ((angle * 180 / Math.PI) + 90 + 360) % 360;
+          degrees = Math.round(degrees);
+          onSetNorthAngle(degrees);
+        }
+        return;
+      }
+
       if (toolMode === 'draw' && drawStart) {
         const world = screenToWorld(sx, sy);
         const snapped = snapToEndpoints(world, walls, SNAP_RADIUS / zoom)
@@ -310,12 +349,13 @@ export default function FloorplanCanvas({
 
   const handlePointerUp = useCallback(
     (e: React.PointerEvent) => {
-      if (isPanning) {
+      if (isPanning || isDraggingCompass) {
         setIsPanning(false);
+        setIsDraggingCompass(false);
         (e.target as HTMLElement).releasePointerCapture(e.pointerId);
       }
     },
-    [isPanning]
+    [isPanning, isDraggingCompass]
   );
 
   const handleWheel = useCallback(
@@ -370,6 +410,105 @@ export default function FloorplanCanvas({
       </div>
     </div>
   );
+}
+
+// ─── Compass ────────────────────────────────────────────
+
+function drawCompass(
+  ctx: CanvasRenderingContext2D,
+  canvasWidth: number,
+  northAngle: number,
+  radius: number,
+  margin: number
+) {
+  const cx = canvasWidth - margin - radius;
+  const cy = margin + radius;
+  const rad = (northAngle * Math.PI) / 180;
+
+  // Background circle
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Tick marks
+  for (let i = 0; i < 8; i++) {
+    const a = (i * Math.PI) / 4 - rad;
+    const inner = i % 2 === 0 ? radius - 10 : radius - 6;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.sin(a) * inner, cy - Math.cos(a) * inner);
+    ctx.lineTo(cx + Math.sin(a) * (radius - 2), cy - Math.cos(a) * (radius - 2));
+    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+    ctx.lineWidth = i % 2 === 0 ? 1.5 : 1;
+    ctx.stroke();
+  }
+
+  // North arrow (red triangle)
+  const northA = -rad;
+  const arrowLen = radius - 6;
+  const nx = cx + Math.sin(northA) * arrowLen;
+  const ny = cy - Math.cos(northA) * arrowLen;
+  const baseL = { x: cx + Math.sin(northA + 2.7) * 10, y: cy - Math.cos(northA + 2.7) * 10 };
+  const baseR = { x: cx + Math.sin(northA - 2.7) * 10, y: cy - Math.cos(northA - 2.7) * 10 };
+
+  ctx.beginPath();
+  ctx.moveTo(nx, ny);
+  ctx.lineTo(baseL.x, baseL.y);
+  ctx.lineTo(cx, cy);
+  ctx.closePath();
+  ctx.fillStyle = '#ef5350';
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.moveTo(nx, ny);
+  ctx.lineTo(baseR.x, baseR.y);
+  ctx.lineTo(cx, cy);
+  ctx.closePath();
+  ctx.fillStyle = '#c62828';
+  ctx.fill();
+
+  // South arrow (white/gray)
+  const southA = Math.PI - rad;
+  const sx = cx + Math.sin(southA) * arrowLen;
+  const sy = cy - Math.cos(southA) * arrowLen;
+  const sBaseL = { x: cx + Math.sin(southA + 2.7) * 10, y: cy - Math.cos(southA + 2.7) * 10 };
+  const sBaseR = { x: cx + Math.sin(southA - 2.7) * 10, y: cy - Math.cos(southA - 2.7) * 10 };
+
+  ctx.beginPath();
+  ctx.moveTo(sx, sy);
+  ctx.lineTo(sBaseL.x, sBaseL.y);
+  ctx.lineTo(cx, cy);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(255,255,255,0.4)';
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.moveTo(sx, sy);
+  ctx.lineTo(sBaseR.x, sBaseR.y);
+  ctx.lineTo(cx, cy);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(255,255,255,0.2)';
+  ctx.fill();
+
+  // "É" label at north
+  ctx.font = 'bold 12px sans-serif';
+  ctx.fillStyle = '#ef5350';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const labelDist = radius + 12;
+  ctx.fillText('É', cx + Math.sin(northA) * labelDist, cy - Math.cos(northA) * labelDist);
+
+  // Degree label in center
+  ctx.font = '10px monospace';
+  ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(`${northAngle}°`, cx, cy);
+
+  ctx.restore();
 }
 
 // ─── Rendering helpers ──────────────────────────────────
