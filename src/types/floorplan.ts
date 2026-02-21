@@ -52,6 +52,7 @@ export interface FloorplanState {
   rooms: Room[];
   selectedWallId: string | null;
   selectedOpeningId: string | null;
+  selectedRoomId: string | null;
   toolMode: ToolMode;
   globalWallHeight: number;
   northAngle: number; // degrees

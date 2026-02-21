@@ -9,6 +9,7 @@ interface Props {
   onSetToolMode: (mode: ToolMode) => void;
   wallCount: number;
   openingCount: number;
+  roomCount: number;
 }
 
 const tools: { mode: ToolMode; icon: React.ElementType; label: string }[] = [
@@ -22,7 +23,7 @@ const openingItems: { type: OpeningType; emoji: string; label: string }[] = [
   { type: 'door', emoji: '🚪', label: 'Ajtó' },
 ];
 
-export default function Toolbar({ toolMode, onSetToolMode, wallCount, openingCount }: Props) {
+export default function Toolbar({ toolMode, onSetToolMode, wallCount, openingCount, roomCount }: Props) {
   const handleDragStart = (e: React.DragEvent, type: OpeningType) => {
     e.dataTransfer.setData('openingType', type);
     e.dataTransfer.effectAllowed = 'copy';
@@ -68,7 +69,7 @@ export default function Toolbar({ toolMode, onSetToolMode, wallCount, openingCou
       <div className="flex-1" />
 
       <span className="text-xs text-muted-foreground font-mono">
-        {wallCount} fal · {openingCount} nyílászáró
+        {wallCount} fal · {openingCount} nyílászáró · {roomCount} helyiség
       </span>
     </div>
   );
