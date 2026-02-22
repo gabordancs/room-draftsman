@@ -7,6 +7,7 @@ import {
   snapToGrid,
   formatLength,
 } from '@/utils/geometry';
+import { constraintLabel } from '@/utils/constraintSolver';
 import { getRoomPolygonPoints, polygonCentroid } from '@/utils/roomDetection';
 
 interface Props {
@@ -121,6 +122,10 @@ export default function FloorplanCanvas({
     // Draw walls
     for (const wall of walls) {
       drawWall(ctx, wall, wall.id === selectedWallId, offset, zoom, gridSize);
+      // Draw constraint icons
+      if (wall.constraints && wall.constraints.length > 0) {
+        drawConstraintIcons(ctx, wall, offset, zoom, gridSize);
+      }
     }
 
     // Draw openings
@@ -276,6 +281,7 @@ export default function FloorplanCanvas({
               structureType: '',
               uValue: null,
               photos: [],
+              constraints: [],
             });
           }
           setDrawStart(null);
@@ -623,6 +629,42 @@ function drawWall(
   ctx.fillStyle = selected ? '#ffd54f' : 'rgba(255,255,255,0.6)';
   ctx.textAlign = 'center';
   ctx.fillText(formatLength(lengthM), mid.x, mid.y - 10);
+}
+
+function drawConstraintIcons(
+  ctx: CanvasRenderingContext2D, wall: Wall,
+  offset: Point, zoom: number, _gridSize: number
+) {
+  const s = { x: wall.start.x * zoom + offset.x, y: wall.start.y * zoom + offset.y };
+  const e = { x: wall.end.x * zoom + offset.x, y: wall.end.y * zoom + offset.y };
+  const mid = { x: (s.x + e.x) / 2, y: (s.y + e.y) / 2 };
+
+  const dx = e.x - s.x;
+  const dy = e.y - s.y;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  if (len === 0) return;
+  const nx = -dy / len;
+  const ny = dx / len;
+
+  const constraints = wall.constraints || [];
+  const labels = constraints.map(c => constraintLabel(c.type));
+
+  labels.forEach((label, i) => {
+    const offsetAlongWall = (i - (labels.length - 1) / 2) * 18;
+    const px = mid.x + (dx / len) * offsetAlongWall + nx * 18;
+    const py = mid.y + (dy / len) * offsetAlongWall + ny * 18;
+
+    ctx.fillStyle = 'rgba(255, 193, 7, 0.85)';
+    ctx.beginPath();
+    ctx.arc(px, py, 9, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.font = 'bold 11px sans-serif';
+    ctx.fillStyle = '#1a1a2e';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, px, py);
+  });
 }
 
 function drawOpening(

@@ -1,14 +1,17 @@
 import React from 'react';
-import { Wall, WallType } from '@/types/floorplan';
+import { Wall, WallType, WallConstraint, ConstraintType } from '@/types/floorplan';
 import { wallLength, formatLength, wallOrientation } from '@/utils/geometry';
+import { findConnectedWalls, constraintName } from '@/utils/constraintSolver';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import { X, Trash2 } from 'lucide-react';
 
 interface Props {
   wall: Wall;
+  walls: Wall[];
   gridSize: number;
   northAngle: number;
   onUpdate: (id: string, updates: Partial<Wall>) => void;
@@ -22,10 +25,56 @@ const WALL_TYPE_LABELS: Record<WallType, string> = {
   unheated: 'Fűtetlen tér felé',
 };
 
-export default function WallEditorPanel({ wall, gridSize, northAngle, onUpdate, onDelete, onClose }: Props) {
+const SIMPLE_CONSTRAINTS: ConstraintType[] = ['horizontal', 'vertical', 'fixedLength'];
+const REF_CONSTRAINTS: ConstraintType[] = ['perpendicular', 'parallel'];
+
+export default function WallEditorPanel({ wall, walls, gridSize, northAngle, onUpdate, onDelete, onClose }: Props) {
   const lengthM = wallLength(wall) / gridSize;
   const areaM2 = lengthM * wall.height;
   const orientation = wallOrientation(wall, northAngle);
+  const connectedWalls = findConnectedWalls(wall, walls);
+  const constraints = wall.constraints || [];
+
+  const hasConstraint = (type: ConstraintType, refId?: string) =>
+    constraints.some(c => c.type === type && (refId == null || c.refWallId === refId));
+
+  const toggleSimpleConstraint = (type: ConstraintType) => {
+    if (hasConstraint(type)) {
+      onUpdate(wall.id, { constraints: constraints.filter(c => c.type !== type) });
+    } else {
+      const newC: WallConstraint = { type };
+      if (type === 'fixedLength') {
+        newC.fixedLengthM = Math.round(lengthM * 100) / 100;
+      }
+      // Remove conflicting: horizontal <-> vertical
+      let filtered = constraints.filter(c => {
+        if (type === 'horizontal' && c.type === 'vertical') return false;
+        if (type === 'vertical' && c.type === 'horizontal') return false;
+        return true;
+      });
+      onUpdate(wall.id, { constraints: [...filtered, newC] });
+    }
+  };
+
+  const toggleRefConstraint = (type: ConstraintType, refWallId: string) => {
+    if (hasConstraint(type, refWallId)) {
+      onUpdate(wall.id, { constraints: constraints.filter(c => !(c.type === type && c.refWallId === refWallId)) });
+    } else {
+      // Remove conflicting ref constraints of same type
+      let filtered = constraints.filter(c => c.type !== type);
+      onUpdate(wall.id, { constraints: [...filtered, { type, refWallId }] });
+    }
+  };
+
+  const updateFixedLength = (val: number) => {
+    onUpdate(wall.id, {
+      constraints: constraints.map(c =>
+        c.type === 'fixedLength' ? { ...c, fixedLengthM: val } : c
+      ),
+    });
+  };
+
+  const fixedLengthConstraint = constraints.find(c => c.type === 'fixedLength');
 
   return (
     <div className="w-72 bg-card border-l border-border h-full overflow-y-auto flex flex-col">
@@ -114,6 +163,64 @@ export default function WallEditorPanel({ wall, gridSize, northAngle, onUpdate, 
             placeholder="—"
             className="h-8 text-sm font-mono"
           />
+        </div>
+
+        {/* ── Constraints section ── */}
+        <div className="border-t border-border pt-4 space-y-3">
+          <Label className="text-xs text-muted-foreground font-semibold uppercase tracking-wide">Kényszerek</Label>
+
+          {/* Simple constraints */}
+          {SIMPLE_CONSTRAINTS.map(type => (
+            <div key={type} className="flex items-center justify-between">
+              <span className="text-xs text-card-foreground">{constraintName(type)}</span>
+              <Switch
+                checked={hasConstraint(type)}
+                onCheckedChange={() => toggleSimpleConstraint(type)}
+              />
+            </div>
+          ))}
+
+          {/* Fixed length value input */}
+          {fixedLengthConstraint && (
+            <div className="space-y-1 pl-2">
+              <Label htmlFor="fixed-len" className="text-xs text-muted-foreground">Rögzített hossz (m)</Label>
+              <Input
+                id="fixed-len"
+                type="number"
+                step="0.01"
+                min="0.01"
+                value={fixedLengthConstraint.fixedLengthM ?? ''}
+                onChange={(e) => updateFixedLength(parseFloat(e.target.value) || 0.01)}
+                className="h-8 text-sm font-mono"
+              />
+            </div>
+          )}
+
+          {/* Reference constraints (need connected walls) */}
+          {connectedWalls.length > 0 && (
+            <div className="space-y-2 pt-1">
+              <Label className="text-xs text-muted-foreground">Csatlakozó falakhoz képest</Label>
+              {connectedWalls.map(ref => {
+                const refLenM = wallLength(ref) / gridSize;
+                return (
+                  <div key={ref.id} className="bg-muted/50 rounded-md p-2 space-y-1.5">
+                    <span className="text-xs text-muted-foreground font-mono">
+                      Fal ({formatLength(refLenM)})
+                    </span>
+                    {REF_CONSTRAINTS.map(type => (
+                      <div key={type} className="flex items-center justify-between pl-1">
+                        <span className="text-xs text-card-foreground">{constraintName(type)}</span>
+                        <Switch
+                          checked={hasConstraint(type, ref.id)}
+                          onCheckedChange={() => toggleRefConstraint(type, ref.id)}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
 
