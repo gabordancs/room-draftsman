@@ -128,6 +128,17 @@ export function useFloorplanStore() {
     });
   }, []);
 
+  // Load full state (for JSON import)
+  const loadState = useCallback((newState: FloorplanState) => {
+    setState({
+      ...newState,
+      selectedWallId: null,
+      selectedOpeningId: null,
+      selectedRoomId: null,
+      toolMode: 'select',
+    });
+  }, []);
+
   return {
     state,
     setToolMode,
@@ -146,5 +157,6 @@ export function useFloorplanStore() {
     deleteRoom,
     selectRoom,
     recalcRooms,
+    loadState,
   };
 }

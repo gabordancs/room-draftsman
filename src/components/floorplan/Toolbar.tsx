@@ -1,8 +1,9 @@
 import React from 'react';
-import { ToolMode, OpeningType } from '@/types/floorplan';
+import { ToolMode, OpeningType, FloorplanState } from '@/types/floorplan';
 import { Button } from '@/components/ui/button';
 import { MousePointer2, Pencil, Hand } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import ExportDialog from './ExportDialog';
 
 interface Props {
   toolMode: ToolMode;
@@ -10,6 +11,8 @@ interface Props {
   wallCount: number;
   openingCount: number;
   roomCount: number;
+  state: FloorplanState;
+  onImport: (state: FloorplanState) => void;
 }
 
 const tools: { mode: ToolMode; icon: React.ElementType; label: string }[] = [
@@ -23,7 +26,7 @@ const openingItems: { type: OpeningType; emoji: string; label: string }[] = [
   { type: 'door', emoji: '🚪', label: 'Ajtó' },
 ];
 
-export default function Toolbar({ toolMode, onSetToolMode, wallCount, openingCount, roomCount }: Props) {
+export default function Toolbar({ toolMode, onSetToolMode, wallCount, openingCount, roomCount, state, onImport }: Props) {
   const handleDragStart = (e: React.DragEvent, type: OpeningType) => {
     e.dataTransfer.setData('openingType', type);
     e.dataTransfer.effectAllowed = 'copy';
@@ -68,9 +71,11 @@ export default function Toolbar({ toolMode, onSetToolMode, wallCount, openingCou
 
       <div className="flex-1" />
 
-      <span className="text-xs text-muted-foreground font-mono">
+      <span className="text-xs text-muted-foreground font-mono mr-3">
         {wallCount} fal · {openingCount} nyílászáró · {roomCount} helyiség
       </span>
+
+      <ExportDialog state={state} onImport={onImport} />
     </div>
   );
 }
