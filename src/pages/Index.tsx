@@ -23,6 +23,7 @@ const Index = () => {
     selectRoom,
     recalcRooms,
     setNorthAngle,
+    loadState,
   } = useFloorplanStore();
 
   // Recalc rooms whenever walls change
@@ -45,6 +46,8 @@ const Index = () => {
         wallCount={state.walls.length}
         openingCount={state.openings.length}
         roomCount={state.rooms.length}
+        state={state}
+        onImport={loadState}
       />
       <div className="flex flex-1 overflow-hidden">
         <div className="flex-1">
