@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { Wall, Opening, Room, FloorplanState, ToolMode } from '@/types/floorplan';
 import { generateId } from '@/utils/geometry';
 import { detectRooms } from '@/utils/roomDetection';
+import { applyConstraints } from '@/utils/constraintSolver';
 
 const initialState: FloorplanState = {
   walls: [],
@@ -31,10 +32,19 @@ export function useFloorplanStore() {
   }, []);
 
   const updateWall = useCallback((id: string, updates: Partial<Wall>) => {
-    setState(s => ({
-      ...s,
-      walls: s.walls.map(w => w.id === id ? { ...w, ...updates } : w),
-    }));
+    setState(s => {
+      const updatedWalls = s.walls.map(w => {
+        if (w.id !== id) return w;
+        const updated = { ...w, ...updates };
+        // Apply constraints if any
+        if (updated.constraints && updated.constraints.length > 0) {
+          const newEnd = applyConstraints(updated, s.walls, s.gridSize);
+          return { ...updated, end: newEnd };
+        }
+        return updated;
+      });
+      return { ...s, walls: updatedWalls };
+    });
   }, []);
 
   const deleteWall = useCallback((id: string) => {

@@ -12,6 +12,16 @@ export interface Photo {
 
 export type WallType = 'external' | 'internal' | 'unheated';
 
+export type ConstraintType = 'perpendicular' | 'parallel' | 'horizontal' | 'vertical' | 'fixedLength';
+
+export interface WallConstraint {
+  type: ConstraintType;
+  /** For perpendicular/parallel: the reference wall id */
+  refWallId?: string;
+  /** For fixedLength: the locked length in meters */
+  fixedLengthM?: number;
+}
+
 export interface Wall {
   id: string;
   start: Point;
@@ -21,6 +31,7 @@ export interface Wall {
   structureType: string;
   uValue: number | null;
   photos: Photo[];
+  constraints: WallConstraint[];
 }
 
 export type OpeningType = 'window' | 'door';

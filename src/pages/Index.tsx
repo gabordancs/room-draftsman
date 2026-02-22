@@ -70,6 +70,7 @@ const Index = () => {
         {selectedWall && (
           <WallEditorPanel
             wall={selectedWall}
+            walls={state.walls}
             gridSize={state.gridSize}
             northAngle={state.northAngle}
             onUpdate={updateWall}
