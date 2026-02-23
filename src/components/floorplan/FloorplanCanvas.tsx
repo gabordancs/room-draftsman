@@ -27,6 +27,7 @@ interface Props {
   onAddOpening: (opening: Omit<Opening, 'id'>) => string;
   onSelectOpening: (id: string | null) => void;
   onSelectRoom: (id: string | null) => void;
+  onUpdateWall: (id: string, updates: Partial<Wall>) => void;
 }
 
 const WALL_THICKNESS = 6;
@@ -50,6 +51,7 @@ export default function FloorplanCanvas({
   onAddOpening,
   onSelectOpening,
   onSelectRoom,
+  onUpdateWall,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -62,6 +64,16 @@ export default function FloorplanCanvas({
   const [panStart, setPanStart] = useState<Point>({ x: 0, y: 0 });
   const [isDraggingCompass, setIsDraggingCompass] = useState(false);
 
+  // Drag state for wall movement
+  const [dragInfo, setDragInfo] = useState<{
+    wallId: string;
+    part: 'start' | 'end' | 'whole';
+    startMouse: Point;
+    origStart: Point;
+    origEnd: Point;
+    // Connected walls that share endpoints with the dragged wall
+    connectedEndpoints: { wallId: string; endpoint: 'start' | 'end'; sharedWith: 'start' | 'end' }[];
+  } | null>(null);
   const COMPASS_RADIUS = 40;
   const COMPASS_MARGIN = 20;
   const screenToWorld = useCallback(
@@ -304,6 +316,39 @@ export default function FloorplanCanvas({
         const clicked = findWallAtPoint(world, walls, 8 / zoom);
         if (clicked) {
           onSelectWall(clicked.id);
+
+          // Determine if near an endpoint or middle of wall
+          const dStart = distance(world, clicked.start);
+          const dEnd = distance(world, clicked.end);
+          const endpointThreshold = 14 / zoom;
+          let part: 'start' | 'end' | 'whole' = 'whole';
+          if (dStart < endpointThreshold) part = 'start';
+          else if (dEnd < endpointThreshold) part = 'end';
+
+          // Find connected walls
+          const CONN_THRESHOLD = 1;
+          const connectedEndpoints: { wallId: string; endpoint: 'start' | 'end'; sharedWith: 'start' | 'end' }[] = [];
+          for (const w of walls) {
+            if (w.id === clicked.id) continue;
+            if (part === 'whole' || part === 'start') {
+              if (distance(clicked.start, w.start) < CONN_THRESHOLD) connectedEndpoints.push({ wallId: w.id, endpoint: 'start', sharedWith: 'start' });
+              if (distance(clicked.start, w.end) < CONN_THRESHOLD) connectedEndpoints.push({ wallId: w.id, endpoint: 'end', sharedWith: 'start' });
+            }
+            if (part === 'whole' || part === 'end') {
+              if (distance(clicked.end, w.start) < CONN_THRESHOLD) connectedEndpoints.push({ wallId: w.id, endpoint: 'start', sharedWith: 'end' });
+              if (distance(clicked.end, w.end) < CONN_THRESHOLD) connectedEndpoints.push({ wallId: w.id, endpoint: 'end', sharedWith: 'end' });
+            }
+          }
+
+          setDragInfo({
+            wallId: clicked.id,
+            part,
+            startMouse: world,
+            origStart: { ...clicked.start },
+            origEnd: { ...clicked.end },
+            connectedEndpoints,
+          });
+          (e.target as HTMLElement).setPointerCapture(e.pointerId);
         } else {
           // Check if clicked inside a room
           const clickedRoom = findRoomAtPoint(world, rooms, walls);
@@ -339,10 +384,41 @@ export default function FloorplanCanvas({
           const compassCx = cw - COMPASS_MARGIN - COMPASS_RADIUS;
           const compassCy = COMPASS_MARGIN + COMPASS_RADIUS;
           const angle = Math.atan2(sy - compassCy, sx - compassCx);
-          // North points up by default, so angle 0 = right, we want north = up = -90deg
           let degrees = ((angle * 180 / Math.PI) + 90 + 360) % 360;
           degrees = Math.round(degrees);
           onSetNorthAngle(degrees);
+        }
+        return;
+      }
+
+      // Wall dragging in select mode
+      if (dragInfo) {
+        const world = screenToWorld(sx, sy);
+        const dx = world.x - dragInfo.startMouse.x;
+        const dy = world.y - dragInfo.startMouse.y;
+
+        if (dragInfo.part === 'whole') {
+          const newStart = { x: dragInfo.origStart.x + dx, y: dragInfo.origStart.y + dy };
+          const newEnd = { x: dragInfo.origEnd.x + dx, y: dragInfo.origEnd.y + dy };
+          onUpdateWall(dragInfo.wallId, { start: newStart, end: newEnd });
+          // Move connected walls' shared endpoints
+          for (const conn of dragInfo.connectedEndpoints) {
+            const movedPoint = conn.sharedWith === 'start' ? newStart : newEnd;
+            onUpdateWall(conn.wallId, { [conn.endpoint]: { ...movedPoint } });
+          }
+        } else {
+          // Moving a single endpoint
+          const newPoint = {
+            x: (dragInfo.part === 'start' ? dragInfo.origStart.x : dragInfo.origEnd.x) + dx,
+            y: (dragInfo.part === 'start' ? dragInfo.origStart.y : dragInfo.origEnd.y) + dy,
+          };
+          // Snap to grid
+          const snapped = snapToGrid(newPoint, gridSize / GRID_SUBDIVISIONS);
+          onUpdateWall(dragInfo.wallId, { [dragInfo.part]: snapped });
+          // Move connected walls' shared endpoints
+          for (const conn of dragInfo.connectedEndpoints) {
+            onUpdateWall(conn.wallId, { [conn.endpoint]: { ...snapped } });
+          }
         }
         return;
       }
@@ -355,18 +431,19 @@ export default function FloorplanCanvas({
         setDrawCurrent(snapped);
       }
     },
-    [isPanning, panStart, toolMode, drawStart, walls, zoom, gridSize, screenToWorld]
+    [isPanning, panStart, toolMode, drawStart, walls, zoom, gridSize, screenToWorld, isDraggingCompass, onSetNorthAngle, dragInfo, onUpdateWall]
   );
 
   const handlePointerUp = useCallback(
     (e: React.PointerEvent) => {
-      if (isPanning || isDraggingCompass) {
+      if (isPanning || isDraggingCompass || dragInfo) {
         setIsPanning(false);
         setIsDraggingCompass(false);
+        setDragInfo(null);
         (e.target as HTMLElement).releasePointerCapture(e.pointerId);
       }
     },
-    [isPanning, isDraggingCompass]
+    [isPanning, isDraggingCompass, dragInfo]
   );
 
   const handleWheel = useCallback(
@@ -403,7 +480,7 @@ export default function FloorplanCanvas({
   return (
     <div
       ref={containerRef}
-      className="w-full h-full relative overflow-hidden cursor-crosshair"
+      className={`w-full h-full relative overflow-hidden ${toolMode === 'select' ? 'cursor-default' : 'cursor-crosshair'}`}
       onDrop={handleDrop}
       onDragOver={handleDragOver}
     >
