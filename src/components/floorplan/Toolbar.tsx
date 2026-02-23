@@ -1,7 +1,7 @@
 import React from 'react';
 import { ToolMode, OpeningType, FloorplanState } from '@/types/floorplan';
 import { Button } from '@/components/ui/button';
-import { MousePointer2, Pencil, Hand } from 'lucide-react';
+import { MousePointer2, Pencil, Hand, Minus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import ExportDialog from './ExportDialog';
 
@@ -18,6 +18,7 @@ interface Props {
 const tools: { mode: ToolMode; icon: React.ElementType; label: string }[] = [
   { mode: 'select', icon: MousePointer2, label: 'Kiválasztás' },
   { mode: 'draw', icon: Pencil, label: 'Falrajzolás' },
+  { mode: 'virtual', icon: Minus, label: 'Virtuális fal' },
   { mode: 'pan', icon: Hand, label: 'Mozgatás' },
 ];
 

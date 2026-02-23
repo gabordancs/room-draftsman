@@ -260,16 +260,20 @@ export default function FloorplanCanvas({
 
       if (e.button !== 0) return;
 
-      if (toolMode === 'draw') {
+      if (toolMode === 'draw' || toolMode === 'virtual') {
         const world = screenToWorld(sx, sy);
+        const snappedToWall = snapToWallSegment(world, walls, SNAP_RADIUS / zoom);
         const snapped = snapToEndpoints(world, walls, SNAP_RADIUS / zoom)
+          || snappedToWall
           || snapToGrid(world, gridSize / GRID_SUBDIVISIONS);
 
         if (!drawStart) {
           setDrawStart(snapped);
           setDrawCurrent(snapped);
         } else {
+          const endSnappedToWall = snapToWallSegment(world, walls, SNAP_RADIUS / zoom);
           const end = snapToEndpoints(world, walls, SNAP_RADIUS / zoom)
+            || endSnappedToWall
             || snapEndPoint(drawStart, snapToGrid(world, gridSize / GRID_SUBDIVISIONS));
 
           if (distance(drawStart, end) > 5) {
@@ -277,7 +281,7 @@ export default function FloorplanCanvas({
               start: drawStart,
               end,
               height: globalWallHeight,
-              wallType: null,
+              wallType: toolMode === 'virtual' ? 'virtual' : null,
               structureType: '',
               uValue: null,
               photos: [],
@@ -343,9 +347,10 @@ export default function FloorplanCanvas({
         return;
       }
 
-      if (toolMode === 'draw' && drawStart) {
+      if ((toolMode === 'draw' || toolMode === 'virtual') && drawStart) {
         const world = screenToWorld(sx, sy);
         const snapped = snapToEndpoints(world, walls, SNAP_RADIUS / zoom)
+          || snapToWallSegment(world, walls, SNAP_RADIUS / zoom)
           || snapEndPoint(drawStart, snapToGrid(world, gridSize / GRID_SUBDIVISIONS));
         setDrawCurrent(snapped);
       }
@@ -608,25 +613,35 @@ function drawWall(
   const s = { x: wall.start.x * zoom + offset.x, y: wall.start.y * zoom + offset.y };
   const e = { x: wall.end.x * zoom + offset.x, y: wall.end.y * zoom + offset.y };
 
-  ctx.strokeStyle = selected ? '#ffd54f' : '#e0e0e0';
-  ctx.lineWidth = selected ? WALL_THICKNESS + 2 : WALL_THICKNESS;
+  const isVirtual = wall.wallType === 'virtual';
+  
+  if (isVirtual) {
+    ctx.setLineDash([8, 6]);
+    ctx.strokeStyle = selected ? '#ce93d8' : '#9575cd';
+    ctx.lineWidth = selected ? 3 : 2;
+  } else {
+    ctx.setLineDash([]);
+    ctx.strokeStyle = selected ? '#ffd54f' : '#e0e0e0';
+    ctx.lineWidth = selected ? WALL_THICKNESS + 2 : WALL_THICKNESS;
+  }
   ctx.lineCap = 'round';
   ctx.beginPath();
   ctx.moveTo(s.x, s.y);
   ctx.lineTo(e.x, e.y);
   ctx.stroke();
+  ctx.setLineDash([]);
 
   for (const p of [s, e]) {
-    ctx.fillStyle = selected ? '#ffd54f' : '#bdbdbd';
+    ctx.fillStyle = selected ? (isVirtual ? '#ce93d8' : '#ffd54f') : (isVirtual ? '#9575cd' : '#bdbdbd');
     ctx.beginPath();
-    ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+    ctx.arc(p.x, p.y, isVirtual ? 3 : 4, 0, Math.PI * 2);
     ctx.fill();
   }
 
   const lengthM = distance(wall.start, wall.end) / gridSize;
   const mid = { x: (s.x + e.x) / 2, y: (s.y + e.y) / 2 };
   ctx.font = '11px monospace';
-  ctx.fillStyle = selected ? '#ffd54f' : 'rgba(255,255,255,0.6)';
+  ctx.fillStyle = selected ? (isVirtual ? '#ce93d8' : '#ffd54f') : 'rgba(255,255,255,0.6)';
   ctx.textAlign = 'center';
   ctx.fillText(formatLength(lengthM), mid.x, mid.y - 10);
 }
@@ -788,6 +803,29 @@ function drawOpening(
     ctx.fill();
   }
 }
+
+/** Snap point to the nearest wall segment (not just endpoints) */
+function snapToWallSegment(point: Point, walls: Wall[], radius: number): Point | null {
+  let closest: Point | null = null;
+  let closestDist = Infinity;
+  for (const wall of walls) {
+    const dx = wall.end.x - wall.start.x;
+    const dy = wall.end.y - wall.start.y;
+    const lenSq = dx * dx + dy * dy;
+    if (lenSq === 0) continue;
+    let t = ((point.x - wall.start.x) * dx + (point.y - wall.start.y) * dy) / lenSq;
+    if (t <= 0.02 || t >= 0.98) continue; // skip near endpoints (handled by snapToEndpoints)
+    t = Math.max(0, Math.min(1, t));
+    const proj = { x: wall.start.x + t * dx, y: wall.start.y + t * dy };
+    const d = distance(point, proj);
+    if (d < radius && d < closestDist) {
+      closestDist = d;
+      closest = proj;
+    }
+  }
+  return closest;
+}
+
 
 function findWallAtPoint(point: Point, walls: Wall[], threshold: number): Wall | null {
   let best: Wall | null = null;

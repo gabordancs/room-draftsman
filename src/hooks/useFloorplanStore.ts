@@ -1,8 +1,62 @@
 import { useState, useCallback, useEffect } from 'react';
-import { Wall, Opening, Room, FloorplanState, ToolMode } from '@/types/floorplan';
-import { generateId } from '@/utils/geometry';
+import { Wall, Opening, Room, FloorplanState, ToolMode, Point } from '@/types/floorplan';
+import { generateId, distance } from '@/utils/geometry';
 import { detectRooms } from '@/utils/roomDetection';
 import { applyConstraints } from '@/utils/constraintSolver';
+
+const SPLIT_THRESHOLD = 8; // pixels
+
+/** Check if a point lies on the interior of a wall segment */
+function pointOnWallInterior(p: Point, wall: Wall, threshold: number): number | null {
+  const dx = wall.end.x - wall.start.x;
+  const dy = wall.end.y - wall.start.y;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return null;
+  const t = ((p.x - wall.start.x) * dx + (p.y - wall.start.y) * dy) / lenSq;
+  if (t <= 0.02 || t >= 0.98) return null; // too close to endpoints
+  const proj = { x: wall.start.x + t * dx, y: wall.start.y + t * dy };
+  const d = distance(p, proj);
+  return d < threshold ? t : null;
+}
+
+/** Split existing walls where the new wall's endpoints land on them */
+function trySplitWalls(
+  newWall: Wall,
+  existingWalls: Wall[],
+  existingOpenings: Opening[],
+  _gridSize: number
+): { walls: Wall[]; openings: Opening[] } {
+  let walls = [...existingWalls];
+  let openings = [...existingOpenings];
+
+  for (const endpoint of [newWall.start, newWall.end]) {
+    for (let i = 0; i < walls.length; i++) {
+      const w = walls[i];
+      const t = pointOnWallInterior(endpoint, w, SPLIT_THRESHOLD);
+      if (t === null) continue;
+
+      // Split wall w at parameter t
+      const splitPoint = { x: w.start.x + t * (w.end.x - w.start.x), y: w.start.y + t * (w.end.y - w.start.y) };
+      const wall1: Wall = { ...w, id: generateId(), end: splitPoint };
+      const wall2: Wall = { ...w, id: generateId(), start: splitPoint };
+
+      // Reassign openings on this wall
+      openings = openings.map(o => {
+        if (o.wallId !== w.id) return o;
+        if (o.position < t) {
+          return { ...o, wallId: wall1.id, position: o.position / t };
+        } else {
+          return { ...o, wallId: wall2.id, position: (o.position - t) / (1 - t) };
+        }
+      });
+
+      walls.splice(i, 1, wall1, wall2);
+      break; // one split per endpoint
+    }
+  }
+
+  return { walls, openings };
+}
 
 const initialState: FloorplanState = {
   walls: [],
@@ -27,7 +81,17 @@ export function useFloorplanStore() {
   const addWall = useCallback((wall: Omit<Wall, 'id'>) => {
     const id = generateId();
     const newWall: Wall = { ...wall, id };
-    setState(s => ({ ...s, walls: [...s.walls, newWall], selectedWallId: id, selectedOpeningId: null }));
+    setState(s => {
+      // Check if new wall endpoint lands on the middle of an existing wall — split it
+      const splitResult = trySplitWalls(newWall, s.walls, s.openings, s.gridSize);
+      return {
+        ...s,
+        walls: [...splitResult.walls, newWall],
+        openings: splitResult.openings,
+        selectedWallId: id,
+        selectedOpeningId: null,
+      };
+    });
     return id;
   }, []);
 

@@ -27,9 +27,10 @@ const Index = () => {
   } = useFloorplanStore();
 
   // Recalc rooms whenever walls change
+  const wallFingerprint = JSON.stringify(state.walls.map(w => [w.id, Math.round(w.start.x), Math.round(w.start.y), Math.round(w.end.x), Math.round(w.end.y)]));
   useEffect(() => {
     recalcRooms();
-  }, [state.walls.length, recalcRooms]);
+  }, [wallFingerprint, recalcRooms]);
 
   const selectedWall = state.walls.find(w => w.id === state.selectedWallId) || null;
   const selectedOpening = state.openings.find(o => o.id === state.selectedOpeningId) || null;
