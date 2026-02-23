@@ -69,6 +69,7 @@ const Index = () => {
             onAddOpening={addOpening}
             onSelectOpening={selectOpening}
             onSelectRoom={selectRoom}
+            onUpdateWall={updateWall}
           />
         </div>
         {selectedWall && (
