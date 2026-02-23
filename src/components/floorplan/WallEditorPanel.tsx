@@ -23,6 +23,7 @@ const WALL_TYPE_LABELS: Record<WallType, string> = {
   external: 'Külső fal',
   internal: 'Belső fal',
   unheated: 'Fűtetlen tér felé',
+  virtual: 'Virtuális fal',
 };
 
 const SIMPLE_CONSTRAINTS: ConstraintType[] = ['horizontal', 'vertical', 'fixedLength'];
@@ -134,6 +135,7 @@ export default function WallEditorPanel({ wall, walls, gridSize, northAngle, onU
               <SelectItem value="external">Külső fal</SelectItem>
               <SelectItem value="internal">Belső fal</SelectItem>
               <SelectItem value="unheated">Fűtetlen tér felé</SelectItem>
+              <SelectItem value="virtual">Virtuális fal</SelectItem>
             </SelectContent>
           </Select>
         </div>

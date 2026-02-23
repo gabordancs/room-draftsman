@@ -10,7 +10,7 @@ export interface Photo {
   label: string;
 }
 
-export type WallType = 'external' | 'internal' | 'unheated';
+export type WallType = 'external' | 'internal' | 'unheated' | 'virtual';
 
 export type ConstraintType = 'perpendicular' | 'parallel' | 'horizontal' | 'vertical' | 'fixedLength';
 
@@ -55,7 +55,7 @@ export interface Room {
   ceilingHeight: number; // m
 }
 
-export type ToolMode = 'select' | 'draw' | 'pan';
+export type ToolMode = 'select' | 'draw' | 'pan' | 'virtual';
 
 export interface FloorplanState {
   walls: Wall[];
