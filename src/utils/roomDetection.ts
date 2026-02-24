@@ -1,27 +1,24 @@
 import { Wall, Room, Point } from '@/types/floorplan';
 import { distance, generateId } from './geometry';
 
-interface WallEndpoint {
-  point: Point;
-  wallId: string;
-  isStart: boolean;
-}
-
-const EPSILON = 2; // pixels snap threshold for matching endpoints
+const EPSILON = 4; // pixels snap threshold for matching endpoints
 
 function pointsEqual(a: Point, b: Point): boolean {
   return Math.abs(a.x - b.x) < EPSILON && Math.abs(a.y - b.y) < EPSILON;
 }
 
+interface GraphNode {
+  point: Point;
+  neighbors: { key: string; wallId: string }[];
+}
+
 /** Build adjacency graph from wall endpoints */
-function buildGraph(walls: Wall[]): Map<string, { point: Point; neighbors: { key: string; wallId: string }[] }> {
-  const graph = new Map<string, { point: Point; neighbors: { key: string; wallId: string }[] }>();
+function buildGraph(walls: Wall[]): Map<string, GraphNode> {
+  const graph = new Map<string, GraphNode>();
+  const endpoints: { key: string; point: Point }[] = [];
 
   const pointKey = (p: Point) => `${Math.round(p.x)},${Math.round(p.y)}`;
 
-  // Collect all endpoints, merging nearby ones
-  const endpoints: { key: string; point: Point }[] = [];
-  
   const getOrCreateKey = (p: Point): string => {
     for (const ep of endpoints) {
       if (pointsEqual(ep.point, p)) return ep.key;
@@ -39,41 +36,75 @@ function buildGraph(walls: Wall[]): Map<string, { point: Point; neighbors: { key
     if (!graph.has(startKey)) graph.set(startKey, { point: wall.start, neighbors: [] });
     if (!graph.has(endKey)) graph.set(endKey, { point: wall.end, neighbors: [] });
 
-    graph.get(startKey)!.neighbors.push({ key: endKey, wallId: wall.id });
-    graph.get(endKey)!.neighbors.push({ key: startKey, wallId: wall.id });
+    // Avoid duplicate edges
+    const startNode = graph.get(startKey)!;
+    const endNode = graph.get(endKey)!;
+    if (!startNode.neighbors.some(n => n.key === endKey))
+      startNode.neighbors.push({ key: endKey, wallId: wall.id });
+    if (!endNode.neighbors.some(n => n.key === startKey))
+      endNode.neighbors.push({ key: startKey, wallId: wall.id });
+  }
+
+  // Sort each node's neighbors by angle (ascending atan2)
+  for (const [, node] of graph) {
+    node.neighbors.sort((a, b) => {
+      const aNode = graph.get(a.key)!;
+      const bNode = graph.get(b.key)!;
+      const aAngle = Math.atan2(aNode.point.y - node.point.y, aNode.point.x - node.point.x);
+      const bAngle = Math.atan2(bNode.point.y - node.point.y, bNode.point.x - node.point.x);
+      return aAngle - bAngle;
+    });
   }
 
   return graph;
 }
 
-/** Find all minimal cycles (rooms) using the planar graph face-finding algorithm */
+/** Find all minimal faces using the planar face traversal (DCEL-style) algorithm */
 export function detectRooms(walls: Wall[], gridSize: number, existingRooms: Room[]): Room[] {
   if (walls.length < 3) return [];
 
   const graph = buildGraph(walls);
-  const cycles: string[][] = [];
-  const foundCycleKeys = new Set<string>();
 
-  // For each node, try to find minimal cycles using "next edge" traversal
-  // (left-most turn / smallest angle)
-  for (const [startKey] of graph) {
-    const node = graph.get(startKey)!;
-    for (const firstNeighbor of node.neighbors) {
-      const cycle = traceCycle(graph, startKey, firstNeighbor.key);
+  // Track used directed edges
+  const usedEdges = new Set<string>();
+  const cycles: string[][] = [];
+
+  for (const [nodeKey, node] of graph) {
+    for (const neighbor of node.neighbors) {
+      const edgeKey = `${nodeKey}->${neighbor.key}`;
+      if (usedEdges.has(edgeKey)) continue;
+
+      const cycle = traceFace(graph, nodeKey, neighbor.key, usedEdges);
       if (cycle && cycle.length >= 3) {
-        const cycleKey = normalizeCycleKey(cycle);
-        if (!foundCycleKeys.has(cycleKey)) {
-          foundCycleKeys.add(cycleKey);
-          cycles.push(cycle);
-        }
+        cycles.push(cycle);
       }
     }
   }
 
-  // Convert cycles to rooms
-  return cycles.map(cycle => {
-    const points = cycle.map(key => graph.get(key)!.point);
-    const area = polygonArea(points) / (gridSize * gridSize); // m²
+  if (cycles.length === 0) return [];
+
+  // Compute areas, exclude outer face (largest absolute area)
+  const cycleData = cycles.map(cycle => {
+    const points = cycle.map(k => graph.get(k)!.point);
+    const area = Math.abs(signedPolygonArea(points));
+    return { cycle, points, area };
+  });
+
+  let maxArea = 0;
+  let outerIdx = 0;
+  cycleData.forEach((d, i) => {
+    if (d.area > maxArea) { maxArea = d.area; outerIdx = i; }
+  });
+
+  // Interior faces = rooms
+  const interiorCycles = cycleData.filter((_, i) => i !== outerIdx);
+
+  return interiorCycles.map((data, idx) => {
+    const { cycle, area } = data;
+    const areaM2 = area / (gridSize * gridSize);
+
+    // Skip tiny degenerate faces
+    if (areaM2 < 0.01) return null;
 
     // Find wallIds for this cycle
     const wallIds: string[] = [];
@@ -87,7 +118,7 @@ export function detectRooms(walls: Wall[], gridSize: number, existingRooms: Room
       }
     }
 
-    // Try to preserve existing room data (name, ceiling height) if walls match
+    // Try to preserve existing room data
     const existing = existingRooms.find(r => {
       const sortedExisting = [...r.wallIds].sort();
       const sortedNew = [...wallIds].sort();
@@ -97,93 +128,57 @@ export function detectRooms(walls: Wall[], gridSize: number, existingRooms: Room
 
     return {
       id: existing?.id || generateId(),
-      name: existing?.name || `Helyiség ${cycles.indexOf(cycle) + 1}`,
+      name: existing?.name || `Helyiség ${idx + 1}`,
       wallIds,
       ceilingHeight: existing?.ceilingHeight || 2.8,
     };
-  });
+  }).filter(Boolean) as Room[];
 }
 
-function traceCycle(
-  graph: Map<string, { point: Point; neighbors: { key: string; wallId: string }[] }>,
+/**
+ * Trace one face of the planar graph using DCEL-style traversal.
+ * At each node, after arriving from prevKey, pick the PREVIOUS neighbor
+ * in sorted-angle order (the face to the left of the directed edge).
+ */
+function traceFace(
+  graph: Map<string, GraphNode>,
   startKey: string,
-  secondKey: string
+  secondKey: string,
+  usedEdges: Set<string>
 ): string[] | null {
-  const path: string[] = [startKey, secondKey];
+  const path: string[] = [startKey];
   let prevKey = startKey;
   let currentKey = secondKey;
-  const maxSteps = 20;
+  const maxSteps = 50;
 
   for (let step = 0; step < maxSteps; step++) {
-    const current = graph.get(currentKey);
-    if (!current) return null;
+    const edgeKey = `${prevKey}->${currentKey}`;
+    if (usedEdges.has(edgeKey)) return null;
+    usedEdges.add(edgeKey);
 
-    // Get incoming angle
-    const prev = graph.get(prevKey)!;
-    const inAngle = Math.atan2(
-      current.point.y - prev.point.y,
-      current.point.x - prev.point.x
-    );
-
-    // Find the neighbor with the smallest left turn (counterclockwise)
-    let bestKey: string | null = null;
-    let bestAngle = Infinity;
-
-    for (const neighbor of current.neighbors) {
-      if (neighbor.key === prevKey) continue;
-      const next = graph.get(neighbor.key);
-      if (!next) continue;
-
-      const outAngle = Math.atan2(
-        next.point.y - current.point.y,
-        next.point.x - current.point.x
-      );
-
-      // Calculate the signed turn angle (want smallest right turn = largest left turn)
-      let turnAngle = outAngle - inAngle;
-      // Normalize to (-PI, PI]
-      while (turnAngle <= -Math.PI) turnAngle += 2 * Math.PI;
-      while (turnAngle > Math.PI) turnAngle -= 2 * Math.PI;
-
-      // We want the rightmost turn (most negative angle), which traces the minimal face
-      if (turnAngle < bestAngle) {
-        bestAngle = turnAngle;
-        bestKey = neighbor.key;
-      }
+    if (currentKey === startKey) {
+      // Completed the face
+      return path;
     }
 
-    if (!bestKey) return null;
+    path.push(currentKey);
 
-    if (bestKey === startKey) {
-      // Completed cycle - check it's counterclockwise (positive area = interior face)
-      const points = path.map(k => graph.get(k)!.point);
-      const area = signedPolygonArea(points);
-      if (area > 0) return path; // CCW = valid room
-      return null; // CW = outer boundary
-    }
+    const node = graph.get(currentKey);
+    if (!node || node.neighbors.length < 2) return null;
 
-    if (path.includes(bestKey)) return null; // self-intersection
-    path.push(bestKey);
+    // Find prevKey in sorted neighbors
+    const reverseIdx = node.neighbors.findIndex(n => n.key === prevKey);
+    if (reverseIdx === -1) return null;
+
+    // Take the previous neighbor in sorted order (face to the left)
+    const nextIdx = (reverseIdx - 1 + node.neighbors.length) % node.neighbors.length;
+    const nextNeighbor = node.neighbors[nextIdx];
+
     prevKey = currentKey;
-    currentKey = bestKey;
+    currentKey = nextNeighbor.key;
   }
 
   return null;
-}
-
-function normalizeCycleKey(cycle: string[]): string {
-  // Normalize: start from smallest key, try both directions
-  const forward = [...cycle];
-  const backward = [...cycle].reverse();
-  
-  const normalize = (arr: string[]) => {
-    const minIdx = arr.indexOf(arr.reduce((a, b) => a < b ? a : b));
-    return [...arr.slice(minIdx), ...arr.slice(0, minIdx)].join('|');
-  };
-
-  const fKey = normalize(forward);
-  const bKey = normalize(backward);
-  return fKey < bKey ? fKey : bKey;
 }
 
 function signedPolygonArea(points: Point[]): number {
@@ -195,10 +190,6 @@ function signedPolygonArea(points: Point[]): number {
     area -= points[j].x * points[i].y;
   }
   return area / 2;
-}
-
-function polygonArea(points: Point[]): number {
-  return Math.abs(signedPolygonArea(points));
 }
 
 /** Get the centroid of a polygon for label placement */
@@ -219,7 +210,7 @@ export function getRoomPolygonPoints(room: Room, walls: Wall[]): Point[] | null 
   // Build ordered point list by following connected walls
   const points: Point[] = [];
   const used = new Set<string>();
-  
+
   let current = roomWalls[0];
   used.add(current.id);
   points.push(current.start);
