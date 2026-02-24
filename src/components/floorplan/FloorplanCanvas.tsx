@@ -230,6 +230,7 @@ export default function FloorplanCanvas({
         sillHeight: openingType === 'window' ? 0.9 : 0,
         uValue: null,
         position: clampedPos,
+        frameThickness: 0.06,
         photos: [],
       });
     },

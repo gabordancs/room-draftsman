@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { X, Trash2, ImagePlus, Camera } from 'lucide-react';
 import { Slider } from '@/components/ui/slider';
+import OpeningFrontView from './OpeningFrontView';
 
 interface Props {
   opening: Opening;
@@ -115,6 +116,25 @@ export default function OpeningEditorPanel({ opening, wall, gridSize, northAngle
             />
           </div>
         )}
+
+        {/* Frame thickness */}
+        <div className="space-y-1">
+          <Label className="text-xs text-muted-foreground">Keret vastagság (m)</Label>
+          <Input
+            type="number" step="0.01" min="0.01" max="0.3"
+            value={opening.frameThickness}
+            onChange={(e) => onUpdate(opening.id, { frameThickness: parseFloat(e.target.value) || 0.06 })}
+            className="h-8 text-sm font-mono"
+          />
+        </div>
+
+        {/* Front view */}
+        <div className="space-y-1">
+          <Label className="text-xs text-muted-foreground">Előnézet (szemből)</Label>
+          <div className="flex justify-center py-2">
+            <OpeningFrontView opening={opening} />
+          </div>
+        </div>
 
         {/* Area */}
         <div className="space-y-1">
