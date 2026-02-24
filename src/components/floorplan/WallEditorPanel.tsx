@@ -7,7 +7,8 @@ import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { X, Trash2 } from 'lucide-react';
+import { X, Trash2, ImagePlus } from 'lucide-react';
+import { Photo } from '@/types/floorplan';
 
 interface Props {
   wall: Wall;
@@ -35,6 +36,29 @@ export default function WallEditorPanel({ wall, walls, gridSize, northAngle, onU
   const orientation = wallOrientation(wall, northAngle);
   const connectedWalls = findConnectedWalls(wall, walls);
   const constraints = wall.constraints || [];
+  const photoInputRef = React.useRef<HTMLInputElement>(null);
+
+  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+    Array.from(files).forEach(file => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const photo: Photo = {
+          id: Math.random().toString(36).substr(2, 9),
+          data: reader.result as string,
+          date: new Date().toISOString(),
+          label: '',
+        };
+        onUpdate(wall.id, { photos: [...(wall.photos || []), photo] });
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const removePhoto = (photoId: string) => {
+    onUpdate(wall.id, { photos: (wall.photos || []).filter(p => p.id !== photoId) });
+  };
 
   const hasConstraint = (type: ConstraintType, refId?: string) =>
     constraints.some(c => c.type === type && (refId == null || c.refWallId === refId));
@@ -165,6 +189,44 @@ export default function WallEditorPanel({ wall, walls, gridSize, northAngle, onU
             placeholder="—"
             className="h-8 text-sm font-mono"
           />
+        </div>
+
+        {/* ── Photos section ── */}
+        <div className="border-t border-border pt-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <Label className="text-xs text-muted-foreground">Fotók ({(wall.photos || []).length})</Label>
+            <Button
+              variant="ghost" size="sm" className="h-7 text-xs"
+              onClick={() => photoInputRef.current?.click()}
+            >
+              <ImagePlus className="h-3.5 w-3.5 mr-1" /> Hozzáadás
+            </Button>
+          </div>
+          <input
+            ref={photoInputRef}
+            type="file" accept="image/*" multiple className="hidden"
+            onChange={handlePhotoUpload}
+          />
+          {(wall.photos || []).map(photo => (
+            <div key={photo.id} className="relative group">
+              <img src={photo.data} alt={photo.label || 'Fotó'} className="w-full rounded border border-border" />
+              <Button
+                variant="destructive" size="icon"
+                className="absolute top-1 right-1 h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                onClick={() => removePhoto(photo.id)}
+              >
+                <X className="h-3 w-3" />
+              </Button>
+              <Input
+                value={photo.label}
+                onChange={(e) => onUpdate(wall.id, {
+                  photos: (wall.photos || []).map(p => p.id === photo.id ? { ...p, label: e.target.value } : p)
+                })}
+                placeholder="Címke..."
+                className="h-7 text-xs mt-1"
+              />
+            </div>
+          ))}
         </div>
 
         {/* ── Constraints section ── */}
