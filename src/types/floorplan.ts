@@ -45,6 +45,7 @@ export interface Opening {
   sillHeight: number; // m, for windows
   uValue: number | null;
   position: number; // 0-1, relative position along wall
+  frameThickness: number; // m, frame thickness
   photos: Photo[];
 }
 
