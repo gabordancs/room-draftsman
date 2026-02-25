@@ -1,110 +1,54 @@
 
 
-# 2D Alaprajz-rajzoló Modul – Fejlesztési Terv
+## Helyiség elnevezés javítása
 
-## Összefoglaló
-Mérnöki pontosságú, böngészőalapú 2D alaprajz-rajzoló alkalmazás, amely falak rajzolását, nyílászárók elhelyezését és WinWatt-kompatibilis exportot biztosít. Az adatok session-alapúak, mentés exporton keresztül (JSON/XLSX), fotók base64-ként beágyazva.
+### Probléma
+1. Ha egy helyiség nevet kap, az a `recalcRooms` újrafutásakor elveszhet, mert a matching csak wallIds egyezés alapján működik — ha a falak topológiája nem változik, de az `idx` sorrendje igen, az alapértelmezett név (`Helyiség ${idx+1}`) felülírhatja.
+2. Két helyiség kaphat azonos nevet, nincs duplikáció-ellenőrzés.
 
----
+### Megoldás
 
-## 1. fázis: Rajzvászon és falrajzolás
+**1. `src/utils/roomDetection.ts` — Robusztusabb név-megőrzés + egyediség**
 
-### Vászon (Canvas)
-- HTML Canvas alapú vektor-rajzfelület, zoom/pan támogatással
-- Rács (grid) háttér konfigurálható léptékkel
-- Apple Pencil / stylus / egér támogatás (pointer events API)
+A `detectRooms` függvényben:
+- Az existing room matching már működik wallIds alapján. Ezt kiegészítjük egy **centroid-alapú közelítő illesztéssel** is, hogy ha a wallIds megváltoztak (pl. fal kettévágás), de a helyiség geometriailag ugyanaz, a neve megmaradjon.
+- Az alapértelmezett név generálásnál biztosítjuk az **egyediséget**: ha `Helyiség 1` már foglalt, `Helyiség 2`-t adunk, stb.
+- A `name` mezőt csak akkor állítjuk be alapértelmezettre, ha nincs illeszkedő existing room.
 
-### Falrajzolás
-- Szabadkézi vonalhúzás → automatikus egyenesítés fal objektummá
-- Rajzolás közben valós idejű hossz-kijelzés (m, 2 tizedessel)
-- Snap rendszer: sarokpontokra + 0°/90°/180° irányokra ragadás
-- Okos rajzolás: közel vízszintes/függőleges vonalak automatikus igazítása
+**2. `src/components/floorplan/RoomEditorPanel.tsx` — Duplikáció-ellenőrzés a UI-ban**
 
-### Fal szerkesztőpanel
-- Fal kiválasztásakor megjelenő oldalsó panel:
-  - Hossz (m, numerikusan felülírható)
-  - Magasság (m, globális alapérték + egyedi módosítás)
-  - Fal típusa: külső / belső / fűtetlen tér felé
-  - Szerkezeti típus (opcionális szöveges)
-  - U-érték (opcionális, W/m²K)
+- A név módosításakor ellenőrizzük, hogy a megadott név nem egyezik-e egy másik helyiség nevével.
+- Ha igen, hibaüzenetet jelenítünk meg és nem engedjük menteni.
 
----
+### Érintett fájlok
 
-## 2. fázis: Geometriai kényszerek (Constraint rendszer)
+| Fájl | Változás |
+|------|----------|
+| `src/utils/roomDetection.ts` | Egyedi alapértelmezett név generálás + centroid matching fallback |
+| `src/components/floorplan/RoomEditorPanel.tsx` | Duplikáció-ellenőrzés az Input mezőnél |
+| `src/pages/Index.tsx` | `rooms` prop átadása a `RoomEditorPanel`-nek a duplikáció-ellenőrzéshez |
 
-- Falanként bekapcsolható kényszerek:
-  - Derékszög (⊥), párhuzamosság (∥)
-  - Vízszintes / függőleges rögzítés
-  - Hossz rögzítés (parametrikus)
-- Kényszerek vizuális megjelenítése ikonokkal a falakon
-- Kényszer-prioritás: derékszög > párhuzamos > hossz
-- Kényszerek feloldhatók egyenként
-- Csatlakozó falak mozgatásakor a kényszerek megmaradnak
+### Technikai részletek
 
----
+**roomDetection.ts — egyedi név generálás:**
+```typescript
+// Collect used names from matched existing rooms first
+const usedNames = new Set<string>();
 
-## 3. fázis: Tájolás – Kompasz
+// After mapping, generate unique default names for new rooms
+function uniqueDefaultName(usedNames: Set<string>): string {
+  let i = 1;
+  while (usedNames.has(`Helyiség ${i}`)) i++;
+  const name = `Helyiség ${i}`;
+  usedNames.add(name);
+  return name;
+}
+```
 
-- Forgatható „Észak" kompasz vízjel a vászon sarkában
-- 0–360° forgatás, a rajzot nem mozgatja
-- Falak tájolása automatikusan számítva:
-  - Fokban (0–360°)
-  - Égtáj szerint (É, ÉK, K, DK, D, DNy, Ny, ÉNy)
-
----
-
-## 4. fázis: Nyílászárók (ablak, ajtó)
-
-### Elhelyezés
-- Drag-and-drop paletta ablak/ajtó ikonokkal
-- Nyílászáró csak falra helyezhető (ütközés- és peremellenőrzés)
-- Fal mozgatásakor a nyílászáró együtt mozog
-
-### Nyílászáró paraméterek
-- Típus (ablak / ajtó)
-- Szélesség, magasság (m)
-- Parapetmagasság (ablaknál)
-- Felület (m², automatikusan számított)
-- U-érték
-- Beépítési pozíció (relatív % a fal mentén)
-
-### Fotócsatolás
-- Nyílászáróhoz és falhoz 1 vagy több fotó csatolható
-- Fotók base64-ként tárolódnak
-- Metaadatok: dátum, megjegyzés/címke
-- Exportban a fotók base64 adatként jelennek meg
-
----
-
-## 5. fázis: Helyiségfelismerés
-
-- Zárt falpoligonból automatikus helyiség-detektálás
-- Helyiségadatok:
-  - Név (szerkeszthető)
-  - Alapterület (m², automatikus)
-  - Belmagasság (m)
-  - Légtérfogat (m³, számított)
-
----
-
-## 6. fázis: Export (WinWatt-kompatibilis)
-
-### Validáció export előtt
-- Export tiltása, ha: falhossz = 0, hiányzó faltípus, nincs északi irány, nyílászáró nincs falhoz rendelve, nyílászáró túllóg, helyiség nem zárt
-
-### Export formátumok
-- **JSON** – teljes adatmodell automatizált feldolgozáshoz
-- **XLSX** – WinWatt-barát oszlopnevekkel, falak/nyílászárók/helyiségek külön lapokon
-- **Projekt import** – JSON visszatöltés a munkamenet folytatásához
-
----
-
-## Technikai megközelítés
-- HTML Canvas + pointer events (stylus/egér/touch)
-- Saját geometriai modell: fal, nyílászáró, helyiség entitások
-- Constraint-solver egyszerű kényszerekhezz
-- 0,01 m pontosság
-- Reszponzív: desktop + iPad támogatás
-- Nincs backend – minden lokálisan, session-ben tárolva
-- Exportálás kliens-oldalon (xlsx generálás böngészőben)
+**RoomEditorPanel — duplikáció-ellenőrzés:**
+```typescript
+// Props-ban megkapja az összes room-ot
+const isDuplicate = allRooms.some(r => r.id !== room.id && r.name === room.name);
+// Ha duplikált, piros border + hibaüzenet
+```
 
