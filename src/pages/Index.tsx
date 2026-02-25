@@ -97,6 +97,7 @@ const Index = () => {
         {selectedRoom && (
           <RoomEditorPanel
             room={selectedRoom}
+            allRooms={state.rooms}
             walls={state.walls}
             gridSize={state.gridSize}
             onUpdate={updateRoom}

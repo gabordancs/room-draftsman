@@ -99,8 +99,10 @@ export function detectRooms(walls: Wall[], gridSize: number, existingRooms: Room
   // Interior faces = rooms
   const interiorCycles = cycleData.filter((_, i) => i !== outerIdx);
 
-  return interiorCycles.map((data, idx) => {
-    const { cycle, area } = data;
+  const usedNames = new Set<string>();
+
+  const results = interiorCycles.map((data) => {
+    const { cycle, points, area } = data;
     const areaM2 = area / (gridSize * gridSize);
 
     // Skip tiny degenerate faces
@@ -118,21 +120,58 @@ export function detectRooms(walls: Wall[], gridSize: number, existingRooms: Room
       }
     }
 
-    // Try to preserve existing room data
-    const existing = existingRooms.find(r => {
+    // Try to preserve existing room data — first by wallIds match
+    let existing = existingRooms.find(r => {
       const sortedExisting = [...r.wallIds].sort();
       const sortedNew = [...wallIds].sort();
       return sortedExisting.length === sortedNew.length &&
         sortedExisting.every((id, i) => id === sortedNew[i]);
     });
 
+    // Fallback: centroid-based matching for topology changes (e.g. wall split)
+    if (!existing) {
+      const centroid = polygonCentroid(points);
+      const CENTROID_THRESHOLD = gridSize * 2;
+      let bestDist = Infinity;
+      for (const r of existingRooms) {
+        const rPoints = getRoomPolygonPoints(r, walls);
+        if (!rPoints) continue;
+        const rCentroid = polygonCentroid(rPoints);
+        const dist = Math.hypot(centroid.x - rCentroid.x, centroid.y - rCentroid.y);
+        if (dist < CENTROID_THRESHOLD && dist < bestDist) {
+          bestDist = dist;
+          existing = r;
+        }
+      }
+    }
+
+    const name = existing?.name || '';
+    if (name) usedNames.add(name);
+
     return {
       id: existing?.id || generateId(),
-      name: existing?.name || `Helyiség ${idx + 1}`,
+      name,
       wallIds,
       ceilingHeight: existing?.ceilingHeight || 2.8,
     };
   }).filter(Boolean) as Room[];
+
+  // Assign unique default names to rooms without a name
+  for (const room of results) {
+    if (!room.name) {
+      room.name = uniqueDefaultName(usedNames);
+    }
+  }
+
+  return results;
+}
+
+function uniqueDefaultName(usedNames: Set<string>): string {
+  let i = 1;
+  while (usedNames.has(`Helyiség ${i}`)) i++;
+  const name = `Helyiség ${i}`;
+  usedNames.add(name);
+  return name;
 }
 
 /**

@@ -8,6 +8,7 @@ import { getRoomPolygonPoints } from '@/utils/roomDetection';
 
 interface Props {
   room: Room;
+  allRooms: Room[];
   walls: Wall[];
   gridSize: number;
   onUpdate: (id: string, updates: Partial<Room>) => void;
@@ -15,11 +16,13 @@ interface Props {
   onClose: () => void;
 }
 
-export default function RoomEditorPanel({ room, walls, gridSize, onUpdate, onDelete, onClose }: Props) {
+export default function RoomEditorPanel({ room, allRooms, walls, gridSize, onUpdate, onDelete, onClose }: Props) {
   const points = getRoomPolygonPoints(room, walls);
   
   const area = points ? calcArea(points, gridSize) : 0;
   const volume = area * room.ceilingHeight;
+
+  const isDuplicate = allRooms.some(r => r.id !== room.id && r.name === room.name);
 
   return (
     <div className="w-72 bg-card border-l border-border p-4 flex flex-col gap-4 overflow-y-auto">
@@ -38,9 +41,18 @@ export default function RoomEditorPanel({ room, walls, gridSize, onUpdate, onDel
           <Label className="text-xs text-muted-foreground">Név</Label>
           <Input
             value={room.name}
-            onChange={e => onUpdate(room.id, { name: e.target.value })}
-            className="h-8 text-sm mt-1"
+            onChange={e => {
+              const newName = e.target.value;
+              const wouldDuplicate = allRooms.some(r => r.id !== room.id && r.name === newName);
+              if (!wouldDuplicate) {
+                onUpdate(room.id, { name: newName });
+              }
+            }}
+            className={`h-8 text-sm mt-1 ${isDuplicate ? 'border-destructive' : ''}`}
           />
+          {isDuplicate && (
+            <p className="text-xs text-destructive mt-1">Ez a név már foglalt!</p>
+          )}
         </div>
 
         <div>
